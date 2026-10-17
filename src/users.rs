@@ -1,4 +1,4 @@
-use crate::error::{other, AppError, Result};
+use crate::error::{bad, other, AppError, Result};
 use argon2::{
     password_hash::{rand_core::OsRng, PasswordHash, PasswordHasher, PasswordVerifier, SaltString},
     Argon2,
@@ -12,7 +12,10 @@ pub struct User {
     pub quota_bytes: i64,
     pub used_bytes: i64,
     pub is_admin: bool,
+    pub created_at: String,
 }
+
+const MIN_PASSWORD_LEN: usize = 8;
 
 pub fn hash_password(password: &str) -> Result<String> {
     let salt = SaltString::generate(&mut OsRng);
@@ -57,6 +60,9 @@ pub fn create(
     if find_by_username(conn, username)?.is_some() {
         return Err(AppError::UserExists(username.to_string()));
     }
+    if password.len() < MIN_PASSWORD_LEN {
+        return Err(bad("password must be at least 8 characters"));
+    }
     let hash = hash_password(password)?;
     conn.execute(
         "INSERT INTO users (username, password_hash, quota_bytes, is_admin)
@@ -68,7 +74,7 @@ pub fn create(
 
 pub fn find_by_username(conn: &Connection, username: &str) -> Result<Option<User>> {
     conn.query_row(
-        "SELECT id, username, quota_bytes, used_bytes, is_admin
+        "SELECT id, username, quota_bytes, used_bytes, is_admin, created_at
          FROM users WHERE username = ?1 COLLATE NOCASE",
         params![username],
         row_to_user,
@@ -80,7 +86,7 @@ pub fn find_by_username(conn: &Connection, username: &str) -> Result<Option<User
 #[allow(dead_code)]
 pub fn find_by_id(conn: &Connection, id: i64) -> Result<Option<User>> {
     conn.query_row(
-        "SELECT id, username, quota_bytes, used_bytes, is_admin
+        "SELECT id, username, quota_bytes, used_bytes, is_admin, created_at
          FROM users WHERE id = ?1",
         params![id],
         row_to_user,
@@ -91,7 +97,7 @@ pub fn find_by_id(conn: &Connection, id: i64) -> Result<Option<User>> {
 
 pub fn list(conn: &Connection) -> Result<Vec<User>> {
     let mut stmt = conn.prepare(
-        "SELECT id, username, quota_bytes, used_bytes, is_admin
+        "SELECT id, username, quota_bytes, used_bytes, is_admin, created_at
          FROM users ORDER BY username COLLATE NOCASE",
     )?;
     let users = stmt
@@ -137,6 +143,40 @@ pub fn set_used_bytes(conn: &Connection, user_id: i64, used: u64) -> Result<()> 
     Ok(())
 }
 
+pub fn set_password(conn: &Connection, user_id: i64, password: &str) -> Result<()> {
+    if password.len() < MIN_PASSWORD_LEN {
+        return Err(bad("password must be at least 8 characters"));
+    }
+    conn.execute(
+        "UPDATE users SET password_hash = ?1 WHERE id = ?2",
+        params![hash_password(password)?, user_id],
+    )?;
+    Ok(())
+}
+
+pub fn set_admin(conn: &Connection, user_id: i64, is_admin: bool) -> Result<()> {
+    conn.execute(
+        "UPDATE users SET is_admin = ?1 WHERE id = ?2",
+        params![is_admin as i64, user_id],
+    )?;
+    Ok(())
+}
+
+pub fn admin_count(conn: &Connection) -> Result<i64> {
+    conn.query_row("SELECT COUNT(*) FROM users WHERE is_admin = 1", [], |r| {
+        r.get(0)
+    })
+    .map_err(Into::into)
+}
+
+/// recompute used_bytes from disk; returns the new value. used after
+/// out-of-band changes to a user's directory
+pub fn recalc(conn: &Connection, data_dir: &std::path::Path, user: &User) -> Result<u64> {
+    let actual = crate::storage::disk_usage(&crate::db::user_dir(data_dir, user.id));
+    set_used_bytes(conn, user.id, actual)?;
+    Ok(actual)
+}
+
 pub fn delete(conn: &Connection, username: &str) -> Result<i64> {
     let user = find_by_username(conn, username)?
         .ok_or_else(|| AppError::UserNotFound(username.to_string()))?;
@@ -151,5 +191,6 @@ fn row_to_user(row: &rusqlite::Row<'_>) -> rusqlite::Result<User> {
         quota_bytes: row.get(2)?,
         used_bytes: row.get(3)?,
         is_admin: row.get::<_, i64>(4)? != 0,
+        created_at: row.get(5)?,
     })
 }

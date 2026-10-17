@@ -1,3 +1,4 @@
+pub mod admin;
 pub mod auth;
 pub mod cli;
 pub mod commands;
@@ -5,8 +6,10 @@ pub mod db;
 pub mod error;
 pub mod files;
 pub mod router;
+pub mod shares;
 pub mod size;
 pub mod state;
+pub mod static_files;
 pub mod storage;
 pub mod transfer;
 pub mod users;

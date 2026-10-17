@@ -114,7 +114,17 @@ pub async fn download(
     headers: HeaderMap,
 ) -> Result<Response> {
     let root = state.user_dir(auth.user.id);
-    let file = storage::sanitize(&root, &path)?;
+    serve_file(&root, &path, &headers).await
+}
+
+/// range-aware file download rooted at `root`; shared by the authenticated
+/// download handler and public share downloads
+pub async fn serve_file(
+    root: &std::path::Path,
+    path: &str,
+    headers: &HeaderMap,
+) -> Result<Response> {
+    let file = storage::sanitize(root, path)?;
     let meta = tokio::fs::metadata(&file).await?;
     if meta.is_dir() {
         return Err(bad("path is a directory; use the zip endpoint"));
@@ -236,7 +246,13 @@ pub async fn zip(
     Query(crate::files::PathReq { path }): Query<crate::files::PathReq>,
 ) -> Result<Response> {
     let root = state.user_dir(auth.user.id);
-    let dir = storage::sanitize(&root, &path)?;
+    serve_zip(&root, &path).await
+}
+
+/// streamed zip of a directory under `root`; shared by the authenticated zip
+/// handler and public share downloads
+pub async fn serve_zip(root: &std::path::Path, path: &str) -> Result<Response> {
+    let dir = storage::sanitize(root, path)?;
     if !tokio::fs::metadata(&dir).await?.is_dir() {
         return Err(bad("path is not a directory"));
     }

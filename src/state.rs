@@ -34,6 +34,10 @@ impl AppState {
         })))
     }
 
+    pub fn data_dir(&self) -> &Path {
+        &self.0.data_dir
+    }
+
     pub fn user_dir(&self, user_id: i64) -> PathBuf {
         db::user_dir(&self.0.data_dir, user_id)
     }

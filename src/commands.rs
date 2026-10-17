@@ -36,10 +36,6 @@ pub fn run_init(
             first
         }
     };
-    if password.len() < 8 {
-        return Err(other("password must be at least 8 characters"));
-    }
-
     let conn = db::open(data_dir)?;
     db::init_schema(&conn)?;
     let admin_id = users::create(&conn, &username, &password, quota, true)?;
@@ -68,10 +64,6 @@ pub fn run_user_add(
         Some(p) => p,
         None => rpassword::prompt_password(format!("Password for '{username}': "))?,
     };
-    if password.len() < 8 {
-        return Err(other("password must be at least 8 characters"));
-    }
-
     let conn = db::open(data_dir)?;
     let id = users::create(&conn, username, &password, quota, false)?;
     std::fs::create_dir_all(db::user_dir(data_dir, id))?;
@@ -158,7 +150,7 @@ pub fn run_user_recalc(data_dir: &Path, username: Option<&str>) -> Result<()> {
     };
 
     for u in &targets {
-        let actual = storage::disk_usage(&db::user_dir(data_dir, u.id));
+        let actual = users::recalc(&conn, data_dir, u)?;
         users::set_used_bytes(&conn, u.id, actual)?;
         println!(
             "{:<24} {:>12} (db: {:>12}, delta: {:+})",

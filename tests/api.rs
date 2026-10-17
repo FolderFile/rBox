@@ -1,133 +1,11 @@
+mod common;
+
 use axum::body::Body;
 use axum::http::{Request, StatusCode};
-use http_body_util::BodyExt;
 use rbox::{db, router, state::AppState, users};
-use std::path::{Path, PathBuf};
 use tower::ServiceExt;
 
-struct Ctx {
-    dir: tempfile::TempDir,
-    app: axum::Router,
-    cookie: String,
-}
-
-async fn setup(username: &str, quota: u64) -> Ctx {
-    let dir = tempfile::tempdir().unwrap();
-    let conn = db::open(dir.path()).unwrap();
-    db::init_schema(&conn).unwrap();
-    let id = users::create(&conn, username, "password123", quota, false).unwrap();
-    std::fs::create_dir_all(db::user_dir(dir.path(), id)).unwrap();
-    drop(conn);
-
-    let app = router::build(AppState::new(dir.path()).unwrap());
-    let cookie = login(&app, username, "password123").await;
-    Ctx { dir, app, cookie }
-}
-
-async fn login(app: &axum::Router, username: &str, password: &str) -> String {
-    let body = serde_json::json!({ "username": username, "password": password });
-    let res = app
-        .clone()
-        .oneshot(
-            Request::builder()
-                .method("POST")
-                .uri("/api/auth/login")
-                .header("content-type", "application/json")
-                .body(Body::from(body.to_string()))
-                .unwrap(),
-        )
-        .await
-        .unwrap();
-    assert_eq!(res.status(), StatusCode::OK, "login should succeed");
-    res.headers()["set-cookie"]
-        .to_str()
-        .unwrap()
-        .split(';')
-        .next()
-        .unwrap()
-        .to_string()
-}
-
-fn get(ctx: &Ctx, uri: &str) -> Request<Body> {
-    Request::builder()
-        .uri(uri)
-        .header("cookie", &ctx.cookie)
-        .body(Body::empty())
-        .unwrap()
-}
-
-fn req(ctx: &Ctx, method: &str, uri: &str, body: impl Into<Body>) -> Request<Body> {
-    Request::builder()
-        .method(method)
-        .uri(uri)
-        .header("cookie", &ctx.cookie)
-        .header("content-type", "application/json")
-        .body(body.into())
-        .unwrap()
-}
-
-async fn send(ctx: &Ctx, req: Request<Body>) -> (StatusCode, Vec<u8>, Option<String>) {
-    let res = ctx.app.clone().oneshot(req).await.unwrap();
-    let status = res.status();
-    let ctype = res
-        .headers()
-        .get("content-type")
-        .and_then(|v| v.to_str().ok())
-        .map(str::to_string);
-    let bytes = res.into_body().collect().await.unwrap().to_bytes();
-    (status, bytes.to_vec(), ctype)
-}
-
-fn multipart(files: &[(&str, &str)]) -> (String, Vec<u8>) {
-    let boundary = "rboxtestboundary";
-    let mut body = Vec::new();
-    for (name, data) in files {
-        body.extend_from_slice(
-            format!(
-                "--{boundary}\r\ncontent-disposition: form-data; name=\"file\"; filename=\"{name}\"\r\ncontent-type: application/octet-stream\r\n\r\n"
-            )
-            .as_bytes(),
-        );
-        body.extend_from_slice(data.as_bytes());
-        body.extend_from_slice(b"\r\n");
-    }
-    body.extend_from_slice(format!("--{boundary}--\r\n").as_bytes());
-    (format!("multipart/form-data; boundary={boundary}"), body)
-}
-
-async fn upload(
-    ctx: &Ctx,
-    dir_param: &str,
-    files: &[(&str, &str)],
-) -> (StatusCode, Vec<u8>, Option<String>) {
-    let (ctype, body) = multipart(files);
-    let mut r = req(
-        ctx,
-        "POST",
-        &format!("/api/files/upload?path={dir_param}"),
-        Body::from(body),
-    );
-    r.headers_mut()
-        .insert("content-type", ctype.parse().unwrap());
-    send(ctx, r).await
-}
-
-fn user_dir(ctx: &Ctx) -> PathBuf {
-    let mut entries = std::fs::read_dir(ctx.dir.path().join("users")).unwrap();
-    entries.next().unwrap().unwrap().path()
-}
-
-async fn used_bytes(dir: &Path) -> i64 {
-    let conn = rusqlite::Connection::open(db::db_path(dir)).unwrap();
-    conn.query_row("SELECT used_bytes FROM users", [], |r| r.get(0))
-        .unwrap()
-}
-
-fn set_used(ctx: &Ctx, used: u64) {
-    let conn = rusqlite::Connection::open(db::db_path(ctx.dir.path())).unwrap();
-    conn.execute("UPDATE users SET used_bytes = ?1", [used as i64])
-        .unwrap();
-}
+use common::*;
 
 #[tokio::test]
 async fn login_rejects_bad_password_and_sets_cookie_flags() {
@@ -177,7 +55,7 @@ async fn login_rejects_bad_password_and_sets_cookie_flags() {
 
 #[tokio::test]
 async fn unauthenticated_requests_get_401() {
-    let ctx = setup("u1", 1024).await;
+    let ctx = setup("u1", 1024, false).await;
     let res = ctx
         .app
         .clone()
@@ -194,7 +72,7 @@ async fn unauthenticated_requests_get_401() {
 
 #[tokio::test]
 async fn listing_sorts_dirs_first_and_rejects_traversal() {
-    let ctx = setup("u1", 1024).await;
+    let ctx = setup("u1", 1024, false).await;
     let root = user_dir(&ctx);
     std::fs::create_dir_all(root.join("zdir")).unwrap();
     std::fs::write(root.join("afile.txt"), "hi").unwrap();
@@ -222,7 +100,7 @@ async fn listing_sorts_dirs_first_and_rejects_traversal() {
 
 #[tokio::test]
 async fn upload_within_quota_then_abort_on_overflow() {
-    let ctx = setup("u1", 64).await;
+    let ctx = setup("u1", 64, false).await;
     let root = user_dir(&ctx);
 
     let (status, _, _) = upload(&ctx, "", &[("small.txt", "hello world")]).await;
@@ -254,7 +132,7 @@ async fn upload_within_quota_then_abort_on_overflow() {
 
 #[tokio::test]
 async fn overwrite_upload_refills_budget() {
-    let ctx = setup("u1", 32).await;
+    let ctx = setup("u1", 32, false).await;
     let root = user_dir(&ctx);
 
     let (status, _, _) = upload(&ctx, "", &[("a.txt", "0123456789")]).await;
@@ -274,7 +152,7 @@ async fn overwrite_upload_refills_budget() {
 
 #[tokio::test]
 async fn range_downloads() {
-    let ctx = setup("u1", 1024).await;
+    let ctx = setup("u1", 1024, false).await;
     let root = user_dir(&ctx);
     let data = "abcdefghijklmnopqrstuvwxyz".repeat(10); // 260 bytes
     std::fs::write(root.join("media.bin"), &data).unwrap();
@@ -314,7 +192,7 @@ async fn range_downloads() {
 
 #[tokio::test]
 async fn zip_streams_directory() {
-    let ctx = setup("u1", 1024).await;
+    let ctx = setup("u1", 1024, false).await;
     let root = user_dir(&ctx);
     std::fs::create_dir_all(root.join("sub")).unwrap();
     std::fs::write(root.join("sub/inner.txt"), "inner").unwrap();
@@ -337,7 +215,7 @@ async fn zip_streams_directory() {
 
 #[tokio::test]
 async fn text_content_roundtrip_and_quota() {
-    let ctx = setup("u1", 32).await;
+    let ctx = setup("u1", 32, false).await;
     let root = user_dir(&ctx);
 
     let (status, _, _) = send(
@@ -376,7 +254,7 @@ async fn text_content_roundtrip_and_quota() {
 
 #[tokio::test]
 async fn mkdir_copy_delete_track_usage() {
-    let ctx = setup("u1", 1024).await;
+    let ctx = setup("u1", 1024, false).await;
 
     let (status, _, _) = send(
         &ctx,
@@ -420,7 +298,7 @@ async fn mkdir_copy_delete_track_usage() {
 
 #[tokio::test]
 async fn copy_that_would_exceed_quota_is_rejected() {
-    let ctx = setup("u2", 8).await;
+    let ctx = setup("u2", 8, false).await;
     let root = user_dir(&ctx);
 
     let (status, _, _) = upload(&ctx, "", &[("a.txt", "12345678")]).await;
@@ -443,7 +321,7 @@ async fn copy_that_would_exceed_quota_is_rejected() {
 
 #[tokio::test]
 async fn rename_and_move_stay_in_sandbox() {
-    let ctx = setup("u1", 1024).await;
+    let ctx = setup("u1", 1024, false).await;
     let root = user_dir(&ctx);
     std::fs::create_dir_all(root.join("d1")).unwrap();
     std::fs::write(root.join("d1/a.txt"), "x").unwrap();

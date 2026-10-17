@@ -39,8 +39,14 @@ fn migrate(conn: &Connection) -> Result<()> {
         1 => {
             // guard each column so partially-migrated databases don't choke
             for (col, ddl) in [
-                ("expires_at", "ALTER TABLE shares ADD COLUMN expires_at INTEGER"),
-                ("password_hash", "ALTER TABLE shares ADD COLUMN password_hash TEXT"),
+                (
+                    "expires_at",
+                    "ALTER TABLE shares ADD COLUMN expires_at INTEGER",
+                ),
+                (
+                    "password_hash",
+                    "ALTER TABLE shares ADD COLUMN password_hash TEXT",
+                ),
             ] {
                 let exists: i64 = conn.query_row(
                     "SELECT COUNT(*) FROM pragma_table_info('shares') WHERE name = ?1",
@@ -51,7 +57,10 @@ fn migrate(conn: &Connection) -> Result<()> {
                     conn.execute(ddl, [])?;
                 }
             }
-            conn.execute("UPDATE meta SET value = '2' WHERE key = 'schema_version'", [])?;
+            conn.execute(
+                "UPDATE meta SET value = '2' WHERE key = 'schema_version'",
+                [],
+            )?;
             Ok(())
         }
         v => Err(other(format!(
@@ -146,7 +155,9 @@ mod tests {
         )
         .unwrap();
         let n: i64 = conn
-            .query_row("SELECT COUNT(*) FROM shares WHERE token = 't'", [], |r| r.get(0))
+            .query_row("SELECT COUNT(*) FROM shares WHERE token = 't'", [], |r| {
+                r.get(0)
+            })
             .unwrap();
         assert_eq!(n, 1);
     }

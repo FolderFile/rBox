@@ -5,7 +5,9 @@ import {
   Dialog, DialogContent, IconButton, Link, Menu, MenuItem, Paper, Snackbar,
   Table, TableBody, TableCell, TableHead, TableRow, Tooltip, Typography,
 } from '@mui/material'
+import FolderOpenOutlined from '@mui/icons-material/FolderOpenOutlined'
 import FolderOutlined from '@mui/icons-material/FolderOutlined'
+import SearchOff from '@mui/icons-material/SearchOff'
 import InsertDriveFileOutlined from '@mui/icons-material/InsertDriveFileOutlined'
 import ImageOutlined from '@mui/icons-material/ImageOutlined'
 import MovieOutlined from '@mui/icons-material/MovieOutlined'
@@ -65,6 +67,7 @@ export default function Files() {
   const [editor, setEditor] = useState<Entry | null>(null)
   const [media, setMedia] = useState<Entry | null>(null)
   const [snack, setSnack] = useState('')
+  const [confirm, setConfirm] = useState(false)
   const fileInput = useRef<HTMLInputElement>(null)
 
   const load = useCallback(
@@ -84,6 +87,28 @@ export default function Files() {
   useEffect(() => {
     load()
   }, [load])
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (editor || media || dialog || menu || confirm) return
+      const tag = document.activeElement?.tagName.toLowerCase()
+      if (tag === 'input' || tag === 'textarea') return
+      if (e.key === 'Escape') {
+        setSelected(new Set())
+      } else if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selected.size) {
+          e.preventDefault()
+          confirmDelete([...selected])
+        }
+      } else if (e.key === 'F2' && selected.size === 1) {
+        const entry = entries.find(en => en.name === [...selected][0])
+        if (entry) setDialog({ kind: 'rename', entry })
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // no dep list: the handler must always see fresh selection state
+  })
 
   useEffect(() => {
     const onRefresh = () => load(true)
@@ -125,7 +150,12 @@ export default function Files() {
   const dlUrl = (e: Entry) =>
     `/api/files/${e.is_dir ? 'zip' : 'download'}?path=${encodeURIComponent(fullPath(e))}`
 
-  const del = (names: string[]) =>
+  const delNames = useRef<string[] | null>(null)
+  const confirmDelete = (names: string[]) => {
+    delNames.current = names
+    setConfirm(true)
+  }
+  const del = async (names: string[]) =>
     act(
       () => Promise.all(names.map(n => api.del(`/api/files?path=${encodeURIComponent(joinPath(cwd, n))}`))),
       `Deleted ${names.length} item${names.length > 1 ? 's' : ''}`,
@@ -214,7 +244,7 @@ export default function Files() {
       {selected.size > 0 && (
         <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1 }}>
           <Typography variant="body2">{selected.size} selected</Typography>
-          <Button color="error" startIcon={<DeleteOutline />} onClick={() => del([...selected])}>
+          <Button color="error" startIcon={<DeleteOutline />} onClick={() => confirmDelete([...selected])}>
             Delete
           </Button>
           <Button size="small" onClick={() => setSelected(new Set())}>
@@ -304,9 +334,23 @@ export default function Files() {
           </Box>
         )}
         {shown.length === 0 && (
-          <Typography variant="body2" color="text.secondary" sx={{ p: 4, textAlign: 'center' }}>
-            {filter ? 'Nothing matches the filter.' : 'This folder is empty. Drop files here to upload.'}
-          </Typography>
+          <Box sx={{ p: 6, textAlign: 'center', color: 'text.secondary' }}>
+            {filter ? (
+              <>
+                <SearchOff />
+                <Typography variant="body2" sx={{ mt: 1 }}>
+                  Nothing matches “{filter}”
+                </Typography>
+              </>
+            ) : (
+              <>
+                <FolderOpenOutlined />
+                <Typography variant="body2" sx={{ mt: 1 }}>
+                  This folder is empty. Drop files here to upload.
+                </Typography>
+              </>
+            )}
+          </Box>
         )}
       </Paper>
 
@@ -326,7 +370,11 @@ export default function Files() {
             setMenu(null)
           },
           onAction: kind => setDialog({ kind, entry: menu.entry }),
-          onDelete: () => del([menu.entry.name]),
+          onDelete: () => {
+            const names = [menu.entry.name]
+            setMenu(null)
+            confirmDelete(names)
+          },
         })}
       </Menu>
 
@@ -390,15 +438,16 @@ export default function Files() {
           confirmLabel="Copy"
         />
       )}
-      {dialog?.kind === 'delete' && (
-        <ConfirmDialog
-          title="Delete"
-          message={`Delete “${dialog.entry.name}” permanently?`}
-          open
-          onCancel={() => setDialog(null)}
-          onConfirm={() => del([dialog.entry.name])}
-        />
-      )}
+      <ConfirmDialog
+        open={confirm}
+        title="Delete"
+        message={`Delete ${delNames.current?.length ?? 0} item(s) permanently?`}
+        onCancel={() => setConfirm(false)}
+        onConfirm={() => {
+          setConfirm(false)
+          if (delNames.current) del(delNames.current)
+        }}
+      />
       {dialog?.kind === 'share' && (
         <ShareDialog
           open

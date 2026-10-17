@@ -21,6 +21,36 @@ pub struct DirReq {
     path: String,
 }
 
+/// attachment header with an ascii-quoted fallback plus RFC 5987 filename* so
+/// non-ascii names survive browsers that mangle the plain parameter
+fn content_disposition(name: &str) -> String {
+    let fallback: String = name
+        .chars()
+        .map(|c| {
+            if c.is_ascii() && !matches!(c, '"' | '\\' | '\n' | '\r') {
+                c
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let mut encoded = String::with_capacity(name.len() * 3);
+    for b in name.bytes() {
+        // attribute chars from RFC 5987 stay raw, everything else is %-escaped
+        if b.is_ascii_alphanumeric()
+            || matches!(
+                b,
+                b'!' | b'#' | b'$' | b'&' | b'+' | b'-' | b'.' | b'^' | b'_' | b'`' | b'|' | b'~'
+            )
+        {
+            encoded.push(b as char)
+        } else {
+            encoded.push_str(&format!("%{b:02X}"))
+        }
+    }
+    format!("attachment; filename=\"{fallback}\"; filename*=UTF-8''{encoded}")
+}
+
 /// multipart upload streamed straight to a staging file next to the target, so
 /// the final rename() is atomic. the budget starts at quota - used, refilled
 /// by any file this same request overwrites; the moment a chunk pushes past
@@ -137,7 +167,7 @@ pub async fn serve_file(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "download".into());
-    let disposition = format!("attachment; filename=\"{file_name}\"");
+    let disposition = content_disposition(&file_name);
 
     let Some(range) = headers.get(header::RANGE) else {
         let stream = ReaderStream::new(tokio::fs::File::open(&file).await?);
@@ -275,7 +305,7 @@ pub async fn serve_zip(root: &std::path::Path, path: &str) -> Result<Response> {
             (header::CONTENT_TYPE, "application/zip".to_string()),
             (
                 header::CONTENT_DISPOSITION,
-                format!("attachment; filename=\"{archive_name}.zip\""),
+                content_disposition(&format!("{archive_name}.zip")),
             ),
         ],
         Body::from_stream(ReaderStream::new(rx)),
@@ -334,4 +364,20 @@ async fn write_zip(
     }
     zw.close().await?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disposition_escapes_non_ascii() {
+        let d = content_disposition("report final.txt");
+        assert!(d.contains("filename=\"report final.txt\""));
+        assert!(d.contains("filename*=UTF-8''report%20final.txt"));
+
+        let d = content_disposition("Bericht für Köln.zip");
+        assert!(d.contains("filename=\"Bericht f_r K_ln.zip\""));
+        assert!(d.contains("filename*=UTF-8''Bericht%20f%C3%BCr%20K%C3%B6ln.zip"));
+    }
 }

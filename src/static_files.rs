@@ -16,7 +16,9 @@ pub async fn serve(uri: Uri) -> Result<Response> {
 
     let (asset, cache, mime) = match Assets::get(path) {
         Some(a) => {
-            let mime = mime_guess::from_path(uri.path()).first_or_octet_stream().to_string();
+            let mime = mime_guess::from_path(uri.path())
+                .first_or_octet_stream()
+                .to_string();
             (a, immutable_cache(path), mime)
         }
         None => {

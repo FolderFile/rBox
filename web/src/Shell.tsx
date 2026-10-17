@@ -4,6 +4,7 @@ import ShareIcon from '@mui/icons-material/Share'
 import PeopleAltOutlined from '@mui/icons-material/PeopleAltOutlined'
 import Brightness4 from '@mui/icons-material/Brightness4'
 import Brightness7 from '@mui/icons-material/Brightness7'
+import MenuIcon from '@mui/icons-material/Menu'
 import Logout from '@mui/icons-material/Logout'
 import SearchIcon from '@mui/icons-material/Search'
 import AccountCircleOutlined from '@mui/icons-material/AccountCircleOutlined'
@@ -35,7 +36,7 @@ export function QuotaBar() {
   )
 }
 
-function DrawerNav() {
+function DrawerNav({ onPick }: { onPick: () => void }) {
   const { user } = useAuth()
   const nav = useNavigate()
   const { pathname } = useLocation()
@@ -47,7 +48,7 @@ function DrawerNav() {
   return (
     <List>
       {items.map(it => (
-        <ListItemButton key={it.to} selected={pathname === it.to} onClick={() => nav(it.to)}>
+        <ListItemButton key={it.to} selected={pathname === it.to} onClick={() => { nav(it.to); onPick() }}>
           <ListItemIcon sx={{ minWidth: 36 }}>{it.icon}</ListItemIcon>
           <ListItemText primary={it.label} />
         </ListItemButton>
@@ -64,6 +65,7 @@ export default function Shell() {
   const compact = useMediaQuery(theme.breakpoints.down('md'))
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const [search, setSearch] = useState('')
+  const [drawerOpen, setDrawerOpen] = useState(false)
 
   useEffect(() => {
     // the explorer reads the filter through this event; a context for one
@@ -82,6 +84,11 @@ export default function Shell() {
     <Box sx={{ display: 'flex' }}>
       <Box component="header" sx={{ position: 'fixed', width: '100%', zIndex: theme.zIndex.appBar }}>
         <Box sx={{ display: 'flex', alignItems: 'center', bgcolor: 'primary.main', color: 'primary.contrastText', px: 1, minHeight: 48 }}>
+          {compact && (
+            <IconButton color="inherit" edge="start" onClick={() => setDrawerOpen(true)} sx={{ mr: 0.5 }}>
+              <MenuIcon />
+            </IconButton>
+          )}
           <Typography variant="h6" noWrap sx={{ px: 1, fontWeight: 500 }}>rbox</Typography>
           <Box sx={{ display: 'flex', alignItems: 'center', ml: 2, bgcolor: 'rgba(255,255,255,0.15)', borderRadius: 1, px: 1, width: 220 }}>
             <SearchIcon fontSize="small" />
@@ -114,15 +121,17 @@ export default function Shell() {
       </Box>
 
       <Drawer
-        variant="permanent"
+        variant={compact ? 'temporary' : 'permanent'}
+        open={compact ? drawerOpen : true}
+        onClose={() => setDrawerOpen(false)}
         sx={{
           width: DRAWER_W,
           flexShrink: 0,
           '& .MuiDrawer-paper': { width: DRAWER_W, boxSizing: 'border-box' },
         }}
       >
-        <Box sx={{ height: compact ? 56 : 48 }} />
-        <DrawerNav />
+        <Box sx={{ height: 48 }} />
+        <DrawerNav onPick={() => setDrawerOpen(false)} />
         <Box sx={{ flex: 1 }} />
         <Divider />
         <QuotaBar />

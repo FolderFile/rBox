@@ -1,0 +1,26 @@
+[package]
+name = "rbox"
+version = "0.1.0"
+edition = "2021"
+description = "A Rust File Manager - self-hosted, multi-user file manager and web server"
+license = "MIT"
+
+[dependencies]
+anyhow = "1"
+thiserror = "2"
+clap = { version = "4", features = ["derive"] }
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.8", features = ["multipart"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+argon2 = "0.5"
+rand = "0.8"
+rpassword = "7"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+chrono = { version = "0.4", features = ["serde"] }
+humantime = "2"
+
+[profile.release]
+opt-level = 3
+lto = true
+strip = true

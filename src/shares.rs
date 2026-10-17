@@ -34,9 +34,12 @@ pub async fn create(
     Json(req): Json<CreateReq>,
 ) -> Result<Json<serde_json::Value>> {
     let root = state.user_dir(auth.user.id);
-    let target = storage::sanitize(&root, &req.path)?;
+    // tolerate "docs/a.txt" and "/docs/a.txt" alike; the stored path is
+    // always the clean relative form shares.rs resolves later
+    let rel = req.path.trim_matches(|c| c == '/' || c == '\\');
+    let target = storage::sanitize(&root, rel)?;
     if !tokio::fs::try_exists(&target).await? {
-        return Err(AppError::NotFound(req.path));
+        return Err(AppError::NotFound(rel.to_string()));
     }
     if let Some(ref p) = req.password {
         if p.is_empty() {
@@ -62,10 +65,10 @@ pub async fn create(
     conn.execute(
         "INSERT INTO shares (user_id, file_path, token, expires_at, password_hash)
          VALUES (?1, ?2, ?3, ?4, ?5)",
-        params![auth.user.id, req.path, token, expires_at, hash],
+        params![auth.user.id, rel, token, expires_at, hash],
     )?;
     Ok(Json(
-        serde_json::json!({ "token": token, "path": req.path, "expires_at": expires_at }),
+        serde_json::json!({ "token": token, "path": rel, "expires_at": expires_at }),
     ))
 }
 

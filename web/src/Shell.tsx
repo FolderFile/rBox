@@ -63,6 +63,8 @@ export default function Shell() {
   const nav = useNavigate()
   const theme = useTheme()
   const compact = useMediaQuery(theme.breakpoints.down('md'))
+  const { pathname } = useLocation()
+  const onFiles = pathname === '/' || pathname.startsWith('/f/')
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const [search, setSearch] = useState('')
   const [drawerOpen, setDrawerOpen] = useState(false)
@@ -82,24 +84,33 @@ export default function Shell() {
 
   return (
     <Box sx={{ display: 'flex' }}>
-      <Box component="header" sx={{ position: 'fixed', width: '100%', zIndex: theme.zIndex.appBar }}>
+      <Box
+        component="header"
+        sx={{
+          position: 'fixed',
+          width: { xs: '100%', md: `calc(100% - ${DRAWER_W}px)` },
+          ml: { md: `${DRAWER_W}px` },
+          zIndex: theme.zIndex.appBar,
+        }}
+      >
         <Box sx={{ display: 'flex', alignItems: 'center', bgcolor: 'primary.main', color: 'primary.contrastText', px: 1, minHeight: 48 }}>
           {compact && (
             <IconButton color="inherit" edge="start" onClick={() => setDrawerOpen(true)} sx={{ mr: 0.5 }}>
               <MenuIcon />
             </IconButton>
           )}
-          <Typography variant="h6" noWrap sx={{ px: 1, fontWeight: 500 }}>rbox</Typography>
-          <Box sx={{ display: 'flex', alignItems: 'center', ml: 2, bgcolor: 'rgba(255,255,255,0.15)', borderRadius: 1, px: 1, width: 220 }}>
-            <SearchIcon fontSize="small" />
-            <InputBase
-              placeholder="Filter…"
-              value={search}
-              onChange={e => setSearch(e.target.value)}
-              sx={{ ml: 1, flex: 1, color: 'inherit', fontSize: '0.85rem' }}
-              inputProps={{ 'aria-label': 'filter files' }}
-            />
-          </Box>
+          {onFiles && (
+            <Box sx={{ display: 'flex', alignItems: 'center', ml: { xs: 0, md: 2 }, bgcolor: 'rgba(255,255,255,0.15)', borderRadius: 1, px: 1, width: { xs: '50%', sm: 220 } }}>
+              <SearchIcon fontSize="small" />
+              <InputBase
+                placeholder="Filter…"
+                value={search}
+                onChange={e => setSearch(e.target.value)}
+                sx={{ ml: 1, flex: 1, color: 'inherit', fontSize: '0.85rem' }}
+                inputProps={{ 'aria-label': 'filter files' }}
+              />
+            </Box>
+          )}
           <Box sx={{ flex: 1 }} />
           <Tooltip title={mode === 'dark' ? 'Light mode' : 'Dark mode'}>
             <IconButton color="inherit" onClick={toggle} size="small" sx={{ mx: 0.5 }}>
@@ -130,7 +141,10 @@ export default function Shell() {
           '& .MuiDrawer-paper': { width: DRAWER_W, boxSizing: 'border-box' },
         }}
       >
-        <Box sx={{ height: 48 }} />
+        <Box sx={{ display: 'flex', alignItems: 'center', minHeight: 48, px: 2 }}>
+          <Typography variant="h6" noWrap sx={{ fontWeight: 500 }}>rbox</Typography>
+        </Box>
+        <Divider />
         <DrawerNav onPick={() => setDrawerOpen(false)} />
         <Box sx={{ flex: 1 }} />
         <Divider />

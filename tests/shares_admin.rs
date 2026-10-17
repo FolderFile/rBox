@@ -364,3 +364,71 @@ async fn share_of_missing_file_is_rejected() {
     let (status, _, _) = send(&ctx, public(&ctx, &format!("/s/{token}/download")).await).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn share_end_to_end_with_frontend_path_format() {
+    let ctx = setup("u1", 1024, false).await;
+
+    // frontend flow: nested upload via multipart, then a share whose path may
+    // carry a leading slash (joinPath output after a route change)
+    let (status, _, _) = send(
+        &ctx,
+        req(
+            &ctx,
+            "POST",
+            "/api/files/mkdir",
+            Body::from(r#"{"path":"docs"}"#),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = upload(&ctx, "docs", &[("readme.txt", "nested share body")]).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, resp, _) = send(
+        &ctx,
+        req(
+            &ctx,
+            "POST",
+            "/api/shares",
+            Body::from(r#"{"path":"/docs/readme.txt"}"#),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let v: serde_json::Value = serde_json::from_slice(&resp).unwrap();
+    assert_eq!(v["path"], "docs/readme.txt");
+    let token = v["token"].as_str().unwrap();
+
+    let (status, resp, _) = send(&ctx, public(&ctx, &format!("/s/{token}/info")).await).await;
+    assert_eq!(status, StatusCode::OK);
+    let v: serde_json::Value = serde_json::from_slice(&resp).unwrap();
+    assert_eq!(v["name"], "readme.txt");
+    assert_eq!(v["is_dir"], false);
+
+    let (status, body, _) = send(&ctx, public(&ctx, &format!("/s/{token}/download")).await).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, b"nested share body");
+}
+
+#[tokio::test]
+async fn missing_target_is_404_not_500() {
+    let ctx = setup("u1", 1024, false).await;
+    let (status, _, _) = upload(&ctx, "", &[("a.txt", "x")]).await;
+    assert_eq!(status, StatusCode::OK);
+    let token = make_share(&ctx, "a.txt", "").await;
+    std::fs::remove_file(user_dir(&ctx).join("a.txt")).unwrap();
+
+    let (status, body, _) = send(&ctx, public(&ctx, &format!("/s/{token}/info")).await).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let msg = v["error"].as_str().unwrap();
+    assert!(
+        !msg.contains("io error"),
+        "not-found must not surface as an io 500: {msg}"
+    );
+
+    // listing a deleted directory is a 404 too
+    let (status, _, _) = send(&ctx, get(&ctx, "/api/files?path=nope")).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+}

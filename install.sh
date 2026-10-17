@@ -3,6 +3,7 @@
 #   curl -fsSL https://raw.githubusercontent.com/FolderFile/rBox/main/install.sh | sh
 # RBOX_VERSION=<tag>    install a specific release instead of the latest
 # RBOX_INSTALL_DIR=<d>  install into <d> instead of /usr/local/bin
+# GITHUB_TOKEN=<t>      needed only while the repo is private
 set -eu
 
 REPO="FolderFile/rBox"
@@ -28,21 +29,38 @@ case "$(uname -m)" in
   *) echo "error: unsupported architecture $(uname -m)" >&2; exit 1 ;;
 esac
 
-if [ -n "${RBOX_VERSION:-}" ]; then
-  tag="$RBOX_VERSION"
-else
-  tag=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" \
-    | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)
-  [ -n "$tag" ] || { echo "error: cannot resolve latest release" >&2; exit 1; }
+auth=""
+if [ -n "${GITHUB_TOKEN:-}" ]; then
+  auth="Authorization: Bearer $GITHUB_TOKEN"
 fi
 
-url="https://github.com/$REPO/releases/download/$tag/rbox-$target.tar.gz"
-echo "downloading rbox $tag ($target)"
+api="https://api.github.com/repos/$REPO/releases"
+asset="$api/assets"
+
+if [ -n "${RBOX_VERSION:-}" ]; then
+  rel="$api/tags/$RBOX_VERSION"
+else
+  rel="$api/latest"
+fi
+
+# the assets endpoint works for private repos too (browser_download_url
+# does not), so go through the API unconditionally
+meta=$(curl -fsSL ${auth:+-H "$auth"} "$rel")
+tag=$(printf '%s' "$meta" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)
+asset_id=$(printf '%s' "$meta" | awk -v a="rbox-$target.tar.gz" '
+  /"id":/ { id = $0; gsub(/[^0-9]/, "", id) }
+  $0 ~ "\"" a "\"" { print id; found = 1; exit }
+  END { if (!found) exit 1 }') || {
+  echo "error: no rbox-$target.tar.gz asset found" >&2
+  exit 1
+}
+echo "downloading rbox ${tag:-unknown} ($target)"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT INT TERM
 
-curl -fsSL "$url" -o "$tmp/rbox.tar.gz"
+curl -fsSL ${auth:+-H "$auth"} -H "Accept: application/octet-stream" \
+  "$asset/$asset_id" -o "$tmp/rbox.tar.gz"
 tar -xzf "$tmp/rbox.tar.gz" -C "$tmp"
 
 if [ -n "${RBOX_INSTALL_DIR:-}" ]; then

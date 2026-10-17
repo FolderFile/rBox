@@ -9,7 +9,7 @@ pub enum AppError {
     Database(#[from] rusqlite::Error),
 
     #[error("io error: {0}")]
-    Io(#[from] std::io::Error),
+    Io(std::io::Error),
 
     #[error("{0}")]
     BadRequest(String),
@@ -61,6 +61,18 @@ pub fn other(msg: impl Into<String>) -> AppError {
 
 pub fn bad(msg: impl Into<String>) -> AppError {
     AppError::BadRequest(msg.into())
+}
+
+// a missing file/directory is a plain 404, never a 500 io error; this also
+// covers the window between share creation and the file being deleted
+impl From<std::io::Error> for AppError {
+    fn from(e: std::io::Error) -> Self {
+        if e.kind() == std::io::ErrorKind::NotFound {
+            AppError::NotFound("file or directory not found".into())
+        } else {
+            AppError::Io(e)
+        }
+    }
 }
 
 impl AppError {

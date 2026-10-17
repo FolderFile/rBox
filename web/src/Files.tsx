@@ -4,6 +4,7 @@ import {
   Alert, Box, Breadcrumbs, Button, Card, CardActionArea, CardContent, Checkbox,
   Dialog, DialogContent, IconButton, Link, Menu, MenuItem, Paper, Snackbar,
   Table, TableBody, TableCell, TableHead, TableRow, Tooltip, Typography,
+  useMediaQuery, useTheme,
 } from '@mui/material'
 import FolderOpenOutlined from '@mui/icons-material/FolderOpenOutlined'
 import FolderOutlined from '@mui/icons-material/FolderOutlined'
@@ -54,9 +55,15 @@ export default function Files() {
   const params = useParams()['*'] ?? ''
   const cwd = params.replace(/\/+$/, '')
   const nav = useNavigate()
-  const { upload } = useUploads()
+  const upload = useUploads().upload
+  const theme = useTheme()
+  const narrow = useMediaQuery(theme.breakpoints.down('sm'))
 
   const [entries, setEntries] = useState<Entry[]>([])
+  // the directory whose contents `entries` actually are; route params can
+  // move on to a new cwd while the stale snapshot is still rendered, so all
+  // row actions must resolve against this, never against `cwd`
+  const [listDir, setListDir] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [view, setView] = useState<View>('table')
   const [filter, setFilter] = useState('')
@@ -75,6 +82,7 @@ export default function Files() {
       try {
         const res = await api.get(`/api/files?path=${encodeURIComponent(cwd)}`)
         setEntries(res.entries)
+        setListDir(cwd)
         setSelected(new Set())
         if (!silent) setError('')
       } catch (err: any) {
@@ -128,8 +136,18 @@ export default function Files() {
 
   const go = (path: string) => nav(path ? `/f/${path}` : '/')
 
+  // a double-click fires a second click after the first already navigated;
+  // without the guard the second click resolves the folder against the new
+  // cwd and produces folder/folder
+  const lastNav = useRef<{ target: string; at: number } | null>(null)
   const openEntry = (e: Entry) => {
-    if (e.is_dir) return go(joinPath(cwd, e.name))
+    if (e.is_dir) {
+      const target = joinPath(listDir, e.name)
+      const now = Date.now()
+      if (lastNav.current && lastNav.current.target === target && now - lastNav.current.at < 600) return
+      lastNav.current = { target, at: now }
+      return go(target)
+    }
     if (isEditable(e.name)) return setEditor(e)
     if (isMedia(e)) return setMedia(e)
   }
@@ -146,7 +164,7 @@ export default function Files() {
     }
   }
 
-  const fullPath = (e: Entry) => joinPath(cwd, e.name)
+  const fullPath = (e: Entry) => joinPath(listDir, e.name)
   const dlUrl = (e: Entry) =>
     `/api/files/${e.is_dir ? 'zip' : 'download'}?path=${encodeURIComponent(fullPath(e))}`
 
@@ -157,7 +175,7 @@ export default function Files() {
   }
   const del = async (names: string[]) =>
     act(
-      () => Promise.all(names.map(n => api.del(`/api/files?path=${encodeURIComponent(joinPath(cwd, n))}`))),
+      () => Promise.all(names.map(n => api.del(`/api/files?path=${encodeURIComponent(joinPath(listDir, n))}`))),
       `Deleted ${names.length} item${names.length > 1 ? 's' : ''}`,
     )
 
@@ -259,7 +277,7 @@ export default function Files() {
         multiple
         hidden
         onChange={e => {
-          if (e.target.files?.length) upload(cwd, Array.from(e.target.files))
+          if (e.target.files?.length) upload(listDir, Array.from(e.target.files))
           e.target.value = ''
         }}
       />
@@ -273,8 +291,8 @@ export default function Files() {
               <TableRow>
                 <TableCell padding="checkbox" />
                 <TableCell>Name</TableCell>
-                <TableCell align="right">Size</TableCell>
-                <TableCell>Modified</TableCell>
+                {!narrow && <TableCell align="right">Size</TableCell>}
+                {!narrow && <TableCell>Modified</TableCell>}
                 <TableCell align="right">Actions</TableCell>
               </TableRow>
             </TableHead>
@@ -292,15 +310,15 @@ export default function Files() {
                   }}
                 >
                   <TableCell padding="checkbox">{checkbox(e)}</TableCell>
-                  <TableCell>
+                  <TableCell sx={{ maxWidth: narrow ? undefined : 400 }}>
                     <Box sx={{ display: 'flex', alignItems: 'center', gap: 1 }}>
                       <Box sx={{ color: 'action.active' }}>{entryIcon(e)}</Box>
                       <Typography variant="body2" noWrap>{e.name}</Typography>
                     </Box>
                   </TableCell>
-                  <TableCell align="right">{e.is_dir ? '-' : fmtSize(e.size)}</TableCell>
-                  <TableCell>{fmtDate(e.modified)}</TableCell>
-                  <TableCell onClick={ev => ev.stopPropagation()}>
+                  {!narrow && <TableCell align="right">{e.is_dir ? '-' : fmtSize(e.size)}</TableCell>}
+                  {!narrow && <TableCell>{fmtDate(e.modified)}</TableCell>}
+                  <TableCell onClick={ev => ev.stopPropagation()} padding={narrow ? 'none' : 'normal'} sx={{ whiteSpace: 'nowrap' }}>
                     <RowActions e={e} />
                   </TableCell>
                 </TableRow>
@@ -385,7 +403,7 @@ export default function Files() {
           open
           onCancel={() => setDialog(null)}
           onSubmit={name =>
-            act(() => api.post('/api/files/mkdir', { path: joinPath(cwd, name) }), `Created ${name}`)
+            act(() => api.post('/api/files/mkdir', { path: joinPath(listDir, name) }), `Created ${name}`)
           }
           confirmLabel="Create"
         />

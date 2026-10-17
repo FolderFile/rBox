@@ -4,6 +4,7 @@ use crate::error::{other, AppError, Result};
 use crate::size::{format_size, parse_size};
 use crate::storage;
 use crate::users;
+use crate::{router, state::AppState};
 use std::io::Write;
 use std::path::Path;
 
@@ -170,21 +171,31 @@ pub fn run_user_recalc(data_dir: &Path, username: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-/// `serve` is wired up in the HTTP layer step; for now it only validates
-/// that the data dir is usable so the failure happens early.
-pub fn run_serve(data_dir: &Path, bind: &str, port: u16) -> Result<()> {
+pub async fn run_serve(data_dir: &Path, bind: &str, port: u16) -> Result<()> {
     db::require_initialized(data_dir)?;
-    let conn = db::open(data_dir)?;
-    let version = db::schema_version(&conn)?;
-    if version != db::SCHEMA_VERSION {
-        return Err(other(format!(
-            "database schema version {version} is newer than supported version {}",
-            db::SCHEMA_VERSION
-        )));
+    {
+        let conn = db::open(data_dir)?;
+        let version = db::schema_version(&conn)?;
+        if version != db::SCHEMA_VERSION {
+            return Err(other(format!(
+                "database schema version {version} is newer than supported version {}",
+                db::SCHEMA_VERSION
+            )));
+        }
     }
-    Err(other(format!(
-        "the HTTP server is not implemented yet; it will listen on {bind}:{port}"
-    )))
+
+    let state = AppState::new(data_dir)?;
+    let app = router::build(state);
+
+    let addr = format!("{bind}:{port}");
+    let listener = tokio::net::TcpListener::bind(&addr)
+        .await
+        .map_err(|e| other(format!("cannot bind {addr}: {e}")))?;
+    println!("rbox listening on {addr}");
+    axum::serve(listener, app)
+        .await
+        .map_err(|e| other(format!("server error: {e}")))?;
+    Ok(())
 }
 
 fn prompt(msg: &str) -> Result<String> {
@@ -199,14 +210,14 @@ fn prompt(msg: &str) -> Result<String> {
     Ok(s)
 }
 
-pub fn dispatch(cli: cli::Cli) -> Result<()> {
+pub async fn dispatch(cli: cli::Cli) -> Result<()> {
     match cli.command {
         cli::Command::Init {
             admin_user,
             admin_password,
             admin_quota,
         } => run_init(&cli.data_dir, admin_user, admin_password, &admin_quota),
-        cli::Command::Serve { bind, port } => run_serve(&cli.data_dir, &bind, port),
+        cli::Command::Serve { bind, port } => run_serve(&cli.data_dir, &bind, port).await,
         cli::Command::User(cmd) => match cmd {
             cli::UserCommand::Add {
                 username,

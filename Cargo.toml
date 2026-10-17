@@ -19,8 +19,19 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 chrono = { version = "0.4", features = ["serde"] }
 humantime = "2"
+tokio-util = { version = "0.7.20", features = ["io"] }
+mime_guess = "2.0.5"
+async_zip = { version = "0.0.19", features = ["tokio", "deflate"] }
+tower = { version = "0.5.3", features = ["util"] }
+bytes = "1.12.1"
+futures-util = { version = "0.3.34", default-features = false, features = ["io", "std"] }
 
 [profile.release]
 opt-level = 3
 lto = true
 strip = true
+
+[dev-dependencies]
+http-body-util = "0.1.5"
+tempfile = "3.27.0"
+zip = "9.0.4"

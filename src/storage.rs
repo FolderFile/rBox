@@ -1,4 +1,4 @@
-use crate::error::{other, Result};
+use crate::error::{bad, other, Result};
 use std::path::{Component, Path, PathBuf};
 
 #[allow(dead_code)] // consumed by the http handlers next step
@@ -8,19 +8,19 @@ use std::path::{Component, Path, PathBuf};
 /// defense in depth if the strip logic ever changes.
 pub fn sanitize(root: &Path, user_path: &str) -> Result<PathBuf> {
     if user_path.starts_with('/') || user_path.starts_with('\\') {
-        return Err(other("path traversal rejected"));
+        return Err(bad("path traversal rejected"));
     }
     let mut safe = root.to_path_buf();
     for part in user_path.split(['/', '\\']) {
         match part {
             "" | "." => {}
-            ".." => return Err(other("path traversal rejected")),
-            p if p.contains('\0') => return Err(other("path traversal rejected")),
+            ".." => return Err(bad("path traversal rejected")),
+            p if p.contains('\0') => return Err(bad("path traversal rejected")),
             p => safe.push(p),
         }
     }
     if !safe.starts_with(root) {
-        return Err(other("path traversal rejected"));
+        return Err(bad("path traversal rejected"));
     }
     Ok(safe)
 }
@@ -31,12 +31,12 @@ pub fn sanitize(root: &Path, user_path: &str) -> Result<PathBuf> {
 pub fn to_relative(root: &Path, abs: &Path) -> Result<String> {
     let rel = abs
         .strip_prefix(root)
-        .map_err(|_| other("path escapes storage root"))?;
+        .map_err(|_| bad("path escapes storage root"))?;
     let parts = rel
         .components()
         .map(|c| match c {
             Component::Normal(p) => Ok(p.to_string_lossy().into_owned()),
-            _ => Err(other("path escapes storage root")),
+            _ => Err(bad("path escapes storage root")),
         })
         .collect::<Result<Vec<_>>>()?;
     Ok(parts.join("/"))

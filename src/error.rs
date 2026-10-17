@@ -1,3 +1,6 @@
+use axum::http::StatusCode;
+use axum::response::{IntoResponse, Response};
+use axum::Json;
 use thiserror::Error;
 
 #[derive(Debug, Error)]
@@ -7,6 +10,20 @@ pub enum AppError {
 
     #[error("io error: {0}")]
     Io(#[from] std::io::Error),
+
+    #[error("{0}")]
+    BadRequest(String),
+
+    #[error("unauthorized")]
+    Unauthorized,
+
+    // reserved for share-link and admin endpoints in a later step
+    #[allow(dead_code)]
+    #[error("forbidden")]
+    Forbidden,
+
+    #[error("not found: {0}")]
+    NotFound(String),
 
     #[error("user '{0}' already exists")]
     UserExists(String),
@@ -19,6 +36,12 @@ pub enum AppError {
 
     #[error("invalid size '{0}'")]
     InvalidSize(String),
+
+    #[error("quota exceeded (limit: {0})")]
+    QuotaExceeded(String),
+
+    #[error("range not satisfiable")]
+    UnsatisfiableRange,
 
     #[error("rbox is not initialized in '{0}'; run `rbox init` first")]
     NotInitialized(std::path::PathBuf),
@@ -34,4 +57,39 @@ pub type Result<T> = std::result::Result<T, AppError>;
 
 pub fn other(msg: impl Into<String>) -> AppError {
     AppError::Other(msg.into())
+}
+
+pub fn bad(msg: impl Into<String>) -> AppError {
+    AppError::BadRequest(msg.into())
+}
+
+impl AppError {
+    fn status(&self) -> StatusCode {
+        match self {
+            AppError::BadRequest(_) | AppError::InvalidUsername(_) | AppError::InvalidSize(_) => {
+                StatusCode::BAD_REQUEST
+            }
+            AppError::Unauthorized => StatusCode::UNAUTHORIZED,
+            AppError::Forbidden => StatusCode::FORBIDDEN,
+            AppError::NotFound(_) | AppError::UserNotFound(_) => StatusCode::NOT_FOUND,
+            AppError::UserExists(_) | AppError::AlreadyInitialized(_) => StatusCode::CONFLICT,
+            AppError::QuotaExceeded(_) => StatusCode::PAYLOAD_TOO_LARGE,
+            AppError::UnsatisfiableRange => StatusCode::RANGE_NOT_SATISFIABLE,
+            _ => StatusCode::INTERNAL_SERVER_ERROR,
+        }
+    }
+}
+
+impl IntoResponse for AppError {
+    fn into_response(self) -> Response {
+        let status = self.status();
+        if status == StatusCode::INTERNAL_SERVER_ERROR {
+            eprintln!("internal error: {self:?}");
+        }
+        (
+            status,
+            Json(serde_json::json!({ "error": self.to_string() })),
+        )
+            .into_response()
+    }
 }

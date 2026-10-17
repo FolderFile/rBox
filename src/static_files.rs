@@ -14,18 +14,21 @@ struct Assets;
 pub async fn serve(uri: Uri) -> Result<Response> {
     let path = uri.path().trim_start_matches('/');
 
-    let (asset, cache) = match Assets::get(path) {
-        Some(a) => (a, immutable_cache(path)),
-        None => (
-            Assets::get("index.html")
-                .ok_or_else(|| other("frontend is not embedded in this build"))?,
-            "no-cache".to_string(),
-        ),
+    let (asset, cache, mime) = match Assets::get(path) {
+        Some(a) => {
+            let mime = mime_guess::from_path(uri.path()).first_or_octet_stream().to_string();
+            (a, immutable_cache(path), mime)
+        }
+        None => {
+            // client-side route: always the SPA shell, so always text/html
+            (
+                Assets::get("index.html")
+                    .ok_or_else(|| other("frontend is not embedded in this build"))?,
+                "no-cache".to_string(),
+                "text/html".to_string(),
+            )
+        }
     };
-
-    let mime = mime_guess::from_path(uri.path())
-        .first_or_octet_stream()
-        .to_string();
     Ok((
         StatusCode::OK,
         [

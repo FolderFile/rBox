@@ -63,6 +63,6 @@ mod tests {
         let body = axum::body::to_bytes(res.into_body(), usize::MAX)
             .await
             .unwrap();
-        assert!(String::from_utf8_lossy(&body).contains("rbox web frontend"));
+        assert!(String::from_utf8_lossy(&body).contains("id=\"root\""));
     }
 }

@@ -25,11 +25,11 @@ import FileCopyOutlined from '@mui/icons-material/FileCopyOutlined'
 import DeleteOutline from '@mui/icons-material/DeleteOutline'
 import CreateNewFolderOutlined from '@mui/icons-material/CreateNewFolderOutlined'
 import NoteAddOutlined from '@mui/icons-material/NoteAddOutlined'
+import Add from '@mui/icons-material/Add'
 import UploadIcon from '@mui/icons-material/Upload'
 import CloudUploadOutlined from '@mui/icons-material/CloudUploadOutlined'
 import GridViewOutlined from '@mui/icons-material/GridViewOutlined'
 import ViewListOutlined from '@mui/icons-material/ViewListOutlined'
-import RefreshOutlined from '@mui/icons-material/RefreshOutlined'
 import HomeRounded from '@mui/icons-material/HomeRounded'
 import SortIcon from '@mui/icons-material/Sort'
 import Close from '@mui/icons-material/Close'
@@ -84,6 +84,7 @@ export default function Files() {
   const [filter, setFilter] = useState('')
   const [sort, setSort] = useState<{ by: SortBy; dir: SortDir }>({ by: 'name', dir: 'asc' })
   const [sortAnchor, setSortAnchor] = useState<HTMLElement | null>(null)
+  const [createAnchor, setCreateAnchor] = useState<HTMLElement | null>(null)
   const [error, setError] = useState('')
   const [menu, setMenu] = useState<{ x: number; y: number; path: string; entry: Entry } | null>(null)
   const [dialog, setDialog] =
@@ -289,17 +290,21 @@ export default function Files() {
   )
 
   const checkbox = (e: Entry) => (
-    <Checkbox
-      size="small"
-      checked={selected.has(e.name)}
-      onChange={ev => {
-        const next = new Set(selected)
-        if (ev.target.checked) next.add(e.name)
-        else next.delete(e.name)
-        setSelected(next)
-      }}
+    <TableCell
+      padding="checkbox"
       onClick={ev => ev.stopPropagation()}
-    />
+    >
+      <Checkbox
+        size="small"
+        checked={selected.has(e.name)}
+        onChange={ev => {
+          const next = new Set(selected)
+          if (ev.target.checked) next.add(e.name)
+          else next.delete(e.name)
+          setSelected(next)
+        }}
+      />
+    </TableCell>
   )
 
   const sortItems: { label: string; value: SortBy }[] = [
@@ -307,10 +312,27 @@ export default function Files() {
     { label: 'Size', value: 'size' },
     { label: 'Modified date', value: 'modified' },
   ]
+  const sortLabel = sortItems.find(it => it.value === sort.by)!.label
+  const openCreate = (kind: 'mkdir' | 'newfile') => {
+    setCreateAnchor(null)
+    setDialog({
+      kind,
+      entry: { name: '', is_dir: kind === 'mkdir', size: 0, modified: 0 },
+    })
+  }
 
   return (
     <Box>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: narrow ? 0.5 : 1, flexWrap: 'wrap' }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
+        <Typography variant="h6" sx={{ flex: 1 }}>My Files</Typography>
+        <Button variant="contained" startIcon={<UploadIcon />} onClick={() => setUploadOpen(true)}>
+          Upload
+        </Button>
+        <Button startIcon={<Add />} onClick={e => setCreateAnchor(e.currentTarget)}>
+          Create
+        </Button>
+      </Box>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1, flexWrap: 'wrap' }}>
         <Breadcrumbs sx={{ flex: 1, minWidth: 120 }} itemsAfterCollapse={3}>
           <Link
             underline="hover"
@@ -333,61 +355,17 @@ export default function Files() {
               </Link>
             ))}
         </Breadcrumbs>
+        <Button
+          size="small"
+          startIcon={<SortIcon />}
+          onClick={e => setSortAnchor(e.currentTarget)}
+          sx={{ textTransform: 'none' }}
+        >
+          Sort: {sortLabel}
+        </Button>
         <Tooltip title={view === 'table' ? 'Grid view' : 'List view'}>
           <IconButton size="small" onClick={() => setView(v => (v === 'table' ? 'grid' : 'table'))}>
             {view === 'table' ? <GridViewOutlined fontSize="small" /> : <ViewListOutlined fontSize="small" />}
-          </IconButton>
-        </Tooltip>
-        <Tooltip title="Sort">
-          <IconButton size="small" onClick={e => setSortAnchor(e.currentTarget)}>
-            <SortIcon fontSize="small" />
-          </IconButton>
-        </Tooltip>
-      </Box>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1, flexWrap: 'wrap' }}>
-        <Button startIcon={<UploadIcon />} variant="contained" onClick={() => setUploadOpen(true)}>
-          Upload
-        </Button>
-        {narrow ? (
-          <>
-            <Tooltip title="New folder">
-              <IconButton
-                size="small"
-                onClick={() => setDialog({ kind: 'mkdir', entry: { name: '', is_dir: true, size: 0, modified: 0 } })}
-              >
-                <CreateNewFolderOutlined fontSize="small" />
-              </IconButton>
-            </Tooltip>
-            <Tooltip title="New file">
-              <IconButton
-                size="small"
-                onClick={() => setDialog({ kind: 'newfile', entry: { name: '', is_dir: false, size: 0, modified: 0 } })}
-              >
-                <NoteAddOutlined fontSize="small" />
-              </IconButton>
-            </Tooltip>
-          </>
-        ) : (
-          <>
-            <Button
-              startIcon={<CreateNewFolderOutlined />}
-              variant="outlined"
-              onClick={() => setDialog({ kind: 'mkdir', entry: { name: '', is_dir: true, size: 0, modified: 0 } })}
-            >
-              New Folder
-            </Button>
-            <Button
-              startIcon={<NoteAddOutlined />}
-              variant="outlined"
-              onClick={() => setDialog({ kind: 'newfile', entry: { name: '', is_dir: false, size: 0, modified: 0 } })}
-            >
-              New File
-            </Button>
-          </>
-        )}
-        <Tooltip title="Refresh">
-          <IconButton size="small" onClick={() => load()}>
-            <RefreshOutlined fontSize="small" />
           </IconButton>
         </Tooltip>
       </Box>
@@ -494,6 +472,17 @@ export default function Files() {
           </Box>
         )}
       </Paper>
+
+      <Menu open={!!createAnchor} anchorEl={createAnchor} onClose={() => setCreateAnchor(null)}>
+        <MenuItem onClick={() => openCreate('mkdir')} sx={{ gap: 1, display: 'flex', alignItems: 'center' }}>
+          <Box sx={{ display: 'inline-flex', alignItems: 'center' }}><CreateNewFolderOutlined fontSize="small" /></Box>
+          New Folder
+        </MenuItem>
+        <MenuItem onClick={() => openCreate('newfile')} sx={{ gap: 1, display: 'flex', alignItems: 'center' }}>
+          <Box sx={{ display: 'inline-flex', alignItems: 'center' }}><NoteAddOutlined fontSize="small" /></Box>
+          New File
+        </MenuItem>
+      </Menu>
 
       <Menu
         open={!!menu}
@@ -636,14 +625,11 @@ export default function Files() {
           open
           path={dialog.entry.name}
           onCancel={() => setDialog(null)}
-          onShare={opts =>
-            act(async () => {
-              const res = await api.post('/api/shares', { path: fullPath(dialog.entry), ...opts })
-              const url = `${location.origin}/s/${res.token}`
-              await navigator.clipboard.writeText(url).catch(() => {})
-              setSnack(`Link copied: ${url}`)
-            }, 'Share created')
-          }
+          onCreate={async opts => {
+            const res = await api.post('/api/shares', { path: fullPath(dialog.entry), ...opts })
+            load(true)
+            return `${location.origin}/s/${res.token}`
+          }}
         />
       )}
 

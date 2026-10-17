@@ -1,11 +1,13 @@
 import { useEffect, useRef, useState } from 'react'
 import {
-  Box, Button, Chip, CircularProgress, Dialog, DialogContent, IconButton, Tooltip, Typography,
+  Box, Button, Chip, CircularProgress, Dialog, DialogContent, IconButton,
+  Snackbar, Tooltip, Typography,
 } from '@mui/material'
 import CloseIcon from '@mui/icons-material/Close'
 import WrapText from '@mui/icons-material/WrapText'
 import TextFields from '@mui/icons-material/TextFields'
 import Save from '@mui/icons-material/Save'
+import FormatAlignLeft from '@mui/icons-material/FormatAlignLeft'
 import DescriptionOutlined from '@mui/icons-material/DescriptionOutlined'
 import CodeMirror from '@uiw/react-codemirror'
 import { EditorView, keymap } from '@codemirror/view'
@@ -70,6 +72,7 @@ export default function TextEditor({
   const [wrap, setWrap] = useState(false)
   const [fontIdx, setFontIdx] = useState(0)
   const [confirmClose, setConfirmClose] = useState(false)
+  const [notice, setNotice] = useState('')
   const lang = langFor(name)
 
   useEffect(() => {
@@ -103,6 +106,19 @@ export default function TextEditor({
   }
 
   const requestClose = () => (dirty ? setConfirmClose(true) : onClose())
+
+  // client-side formatting is only trustworthy where a real parser exists;
+  // other languages simply don't get the button
+  const canFormat = lang.label === 'JSON'
+  const format = () => {
+    try {
+      setContent(JSON.stringify(JSON.parse(content), null, 2))
+      setDirty(true)
+      setNotice('Formatted')
+    } catch (e: any) {
+      setNotice(`cannot format: ${e.message}`)
+    }
+  }
 
   // the keymap closes over a ref so save() stays fresh without rebuilding
   // the editor state on every keystroke
@@ -157,8 +173,22 @@ export default function TextEditor({
           />
         </Tooltip>
         <Box sx={{ flex: 1 }} />
+        {canFormat && (
+          <Tooltip title="Format (pretty-print JSON)">
+            <IconButton size="small" onClick={format}>
+              <FormatAlignLeft fontSize="small" />
+            </IconButton>
+          </Tooltip>
+        )}
         <Tooltip title={wrap ? 'Word wrap: on' : 'Word wrap: off'}>
-          <IconButton size="small" onClick={() => setWrap(w => !w)} color={wrap ? 'primary' : 'default'}>
+          <IconButton
+            size="small"
+            onClick={() => setWrap(w => !w)}
+            sx={{
+              color: wrap ? 'primary.main' : 'inherit',
+              bgcolor: wrap ? 'rgba(25, 118, 210, 0.12)' : 'transparent',
+            }}
+          >
             <WrapText fontSize="small" />
           </IconButton>
         </Tooltip>
@@ -210,6 +240,12 @@ export default function TextEditor({
           setConfirmClose(false)
           onClose()
         }}
+      />
+      <Snackbar
+        open={!!notice}
+        autoHideDuration={2500}
+        onClose={() => setNotice('')}
+        message={notice}
       />
     </Dialog>
   )

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { Box, IconButton, Tooltip, Typography } from '@mui/material'
 import CloseIcon from '@mui/icons-material/Close'
 import ChevronLeft from '@mui/icons-material/ChevronLeft'
@@ -53,7 +53,75 @@ export function Lightbox({
 }) {
   const item = items[index]
   const [zoom, setZoom] = useState(1)
+  const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [touching, setTouching] = useState(false)
   const many = items.length > 1
+
+  // a fresh image always starts at 100% centered
+  useEffect(() => {
+    setZoom(1)
+    setPan({ x: 0, y: 0 })
+  }, [index])
+
+  const zoomTo = (z: number) => {
+    const next = Math.min(Math.max(z, 0.25), 8)
+    if (next <= 1) setPan({ x: 0, y: 0 })
+    setZoom(next)
+  }
+
+  // pinch distance, pan origin and double-tap timing
+  const gesture = useRef<{ pinch?: { dist: number; zoom: number }; pan?: { x: number; y: number }; lastTap: number }>({
+    lastTap: 0,
+  })
+
+  const touchDist = (t: React.TouchList) =>
+    Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY)
+
+  const onTouchStart = (e: React.TouchEvent) => {
+    const g = gesture.current
+    const t = e.touches
+    setTouching(true)
+    if (t.length === 2) {
+      g.pinch = { dist: touchDist(t), zoom }
+      g.pan = undefined
+    } else if (t.length === 1) {
+      if (zoom > 1) g.pan = { x: t[0].clientX - pan.x, y: t[0].clientY - pan.y }
+      else g.pan = undefined
+    }
+  }
+
+  const onTouchMove = (e: React.TouchEvent) => {
+    const g = gesture.current
+    const t = e.touches
+    if (t.length === 2 && g.pinch) {
+      e.preventDefault()
+      zoomTo((g.pinch.zoom * touchDist(t)) / g.pinch.dist)
+    } else if (t.length === 1 && g.pan) {
+      e.preventDefault()
+      setPan({ x: t[0].clientX - g.pan.x, y: t[0].clientY - g.pan.y })
+    }
+  }
+
+  const onTouchEnd = (e: React.TouchEvent) => {
+    const g = gesture.current
+    const t = e.touches
+    if (t.length === 0) {
+      g.pinch = undefined
+      g.pan = undefined
+      setTouching(false)
+      // single-finger tap that never moved counts as a tap for double-tap
+      const now = Date.now()
+      if (now - g.lastTap < 300) {
+        zoomTo(zoom > 1 ? 1 : 2.5)
+        g.lastTap = 0
+      } else {
+        g.lastTap = now
+      }
+    } else if (t.length === 1) {
+      g.pinch = undefined
+      g.pan = undefined
+    }
+  }
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -104,9 +172,9 @@ export function Lightbox({
         <Typography variant="caption" sx={{ color: 'rgba(255,255,255,0.7)' }}>
           {fmtSize(item.size)}
         </Typography>
-        {image && toolbarBtn('Zoom in', () => setZoom(z => Math.min(z * 1.25, 5)), <Add fontSize="small" />)}
-        {image && toolbarBtn('Zoom out', () => setZoom(z => Math.max(z / 1.25, 0.25)), <Remove fontSize="small" />)}
-        {image && toolbarBtn('Reset zoom', () => setZoom(1), <RestartAlt fontSize="small" />)}
+        {image && toolbarBtn('Zoom in', () => zoomTo(zoom * 1.25), <Add fontSize="small" />)}
+        {image && toolbarBtn('Zoom out', () => zoomTo(zoom / 1.25), <Remove fontSize="small" />)}
+        {image && toolbarBtn('Reset zoom', () => zoomTo(1), <RestartAlt fontSize="small" />)}
         {toolbarBtn('Download', () => {
           const a = document.createElement('a')
           a.href = url
@@ -152,18 +220,27 @@ export function Lightbox({
         </IconButton>
       )}
 
-      <Box onClick={ev => ev.stopPropagation()} sx={{ display: 'flex', maxWidth: '90vw', maxHeight: '82vh' }}>
+      <Box
+        onClick={ev => ev.stopPropagation()}
+        sx={{ display: 'flex', maxWidth: '90vw', maxHeight: '82vh', touchAction: 'none' }}
+      >
         {image ? (
           <img
             key={url}
             src={url}
             alt={item.name}
+            onTouchStart={onTouchStart}
+            onTouchMove={onTouchMove}
+            onTouchEnd={onTouchEnd}
             style={{
               maxWidth: '90vw',
               maxHeight: '82vh',
               objectFit: 'contain',
-              transform: `scale(${zoom})`,
-              transition: 'transform 150ms ease',
+              transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
+              // snap instantly while the finger is down so the gesture tracks 1:1
+              transition: touching ? 'none' : 'transform 150ms ease',
+              touchAction: 'none',
+              userSelect: 'none',
             }}
           />
         ) : VIDEO.includes(extOf(item.name)) ? (

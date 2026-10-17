@@ -432,3 +432,64 @@ async fn missing_target_is_404_not_500() {
     let (status, _, _) = send(&ctx, get(&ctx, "/api/files?path=nope")).await;
     assert_eq!(status, StatusCode::NOT_FOUND);
 }
+
+#[tokio::test]
+async fn raw_share_streams_inline_with_true_mime() {
+    let ctx = setup("u1", 1024, false).await;
+    let (status, _, _) = upload(&ctx, "", &[("pic.png", "not-really-png-but-typed")]).await;
+    assert_eq!(status, StatusCode::OK);
+    let token = make_share(&ctx, "pic.png", "").await;
+
+    for uri in [format!("/s/{token}/raw"), format!("/s/{token}/raw/pic.png")] {
+        let (status, headers, body) = send_full(&ctx, public(&ctx, &uri).await).await;
+        assert_eq!(status, StatusCode::OK);
+        let cd = headers["content-disposition"].to_str().unwrap();
+        assert!(
+            cd.starts_with("inline;"),
+            "expected inline disposition: {cd}"
+        );
+        assert_eq!(headers["content-type"], "image/png");
+        assert_eq!(body, b"not-really-png-but-typed");
+    }
+
+    // the download route still forces attachment
+    let (status, headers, _) =
+        send_full(&ctx, public(&ctx, &format!("/s/{token}/download")).await).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(headers["content-disposition"]
+        .to_str()
+        .unwrap()
+        .starts_with("attachment;"));
+}
+
+#[tokio::test]
+async fn landing_page_injects_opengraph_meta() {
+    let ctx = setup("u1", 1024, false).await;
+    let (status, _, _) = upload(&ctx, "", &[("holiday.png", "beach")]).await;
+    assert_eq!(status, StatusCode::OK);
+    let token = make_share(&ctx, "holiday.png", "").await;
+
+    let (status, headers, body) = send_full(&ctx, public(&ctx, &format!("/s/{token}")).await).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(headers["content-type"]
+        .to_str()
+        .unwrap()
+        .starts_with("text/html"));
+    let html = String::from_utf8_lossy(&body);
+    assert!(
+        html.contains(r#"<meta property="og:title""#),
+        "og:title missing"
+    );
+    assert!(html.contains("og:site_name"));
+    assert!(html.contains("holiday.png"));
+    assert!(
+        !html.contains("og:image"),
+        "landing must not embed raw media"
+    );
+    assert!(html.contains(r##"<meta name="theme-color" content="#e53935""##));
+
+    // unknown tokens still serve the plain SPA shell
+    let (status, _, body) = send_full(&ctx, public(&ctx, "/s/zzzznope0000").await).await;
+    assert_eq!(status, StatusCode::OK);
+    assert!(!String::from_utf8_lossy(&body).contains("og:title"));
+}

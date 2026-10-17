@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Button, Chip, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, InputAdornment, MenuItem, Stack, TextField } from '@mui/material'
+import { Button, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, IconButton, InputAdornment, MenuItem, Stack, TextField, Typography } from '@mui/material'
 import CheckIcon from '@mui/icons-material/Check'
 import ContentCopy from '@mui/icons-material/ContentCopy'
 import OpenInNew from '@mui/icons-material/OpenInNew'
@@ -72,9 +72,10 @@ export function ShareDialog(props: {
   const [password, setPassword] = useState('')
   const [url, setUrl] = useState('')
   const [busy, setBusy] = useState(false)
-  const [copied, setCopied] = useState(false)
+  const [copied, setCopied] = useState<'' | 'normal' | 'raw'>('')
   const [error, setError] = useState('')
   const urlField = useRef<HTMLInputElement>(null)
+  const rawField = useRef<HTMLInputElement>(null)
 
   const create = async () => {
     setBusy(true)
@@ -88,13 +89,15 @@ export function ShareDialog(props: {
     }
   }
 
-  const copy = async () => {
-    // clipboard api can be blocked on mobile; the read-only field still
-    // supports tap-select and long-press copy
-    const ok = await navigator.clipboard.writeText(url).then(() => true).catch(() => false)
-    if (!ok) urlField?.current?.select()
-    setCopied(true)
-    setTimeout(() => setCopied(false), 2000)
+  const rawUrl = url ? `${url}/raw/${encodeURIComponent(props.path)}` : ''
+
+  const copy = async (which: 'normal' | 'raw', text: string) => {
+    // clipboard api can be blocked on mobile; the read-only fields still
+    // support tap-select and long-press copy
+    const ok = await navigator.clipboard.writeText(text).then(() => true).catch(() => false)
+    if (!ok) (which === 'normal' ? urlField : rawField).current?.select()
+    setCopied(which)
+    setTimeout(() => setCopied(''), 2000)
   }
 
   return (
@@ -102,26 +105,53 @@ export function ShareDialog(props: {
       <DialogTitle>Share “{props.path}”</DialogTitle>
       <DialogContent>
         {url ? (
-          <Stack spacing={2} sx={{ pt: 1, minWidth: 420 }}>
+          <Stack spacing={2} sx={{ pt: 1, minWidth: { sm: 480 } }}>
+            <Typography variant="caption" color="text.secondary">
+              Preview Page — rbox UI with file info and download.
+            </Typography>
             <TextField
               inputRef={urlField}
               fullWidth
               value={url}
               onFocus={e => e.target.select()}
-              label="Share link"
+              label="Preview Page"
               InputProps={{
                 readOnly: true,
                 sx: { fontFamily: '"Roboto Mono", monospace', fontSize: '0.8rem' },
                 endAdornment: (
                   <InputAdornment position="end">
-                    <Chip size="small" label="public" sx={{ borderRadius: 1 }} />
+                    <IconButton size="small" onClick={() => copy('normal', url)}>
+                      {copied === 'normal'
+                        ? <CheckIcon color="success" fontSize="small" />
+                        : <ContentCopy fontSize="small" />}
+                    </IconButton>
                   </InputAdornment>
                 ),
               }}
             />
-            <DialogContentText>
-              Anyone with this link can download the file. Send it via any messenger.
-            </DialogContentText>
+            <Typography variant="caption" color="text.secondary">
+              Raw File — direct stream; embeds images/video/audio in Discord and Telegram, works with curl and wget.
+            </Typography>
+            <TextField
+              inputRef={rawField}
+              fullWidth
+              value={rawUrl}
+              onFocus={e => e.target.select()}
+              label="Raw File"
+              InputProps={{
+                readOnly: true,
+                sx: { fontFamily: '"Roboto Mono", monospace', fontSize: '0.8rem' },
+                endAdornment: (
+                  <InputAdornment position="end">
+                    <IconButton size="small" onClick={() => copy('raw', rawUrl)}>
+                      {copied === 'raw'
+                        ? <CheckIcon color="success" fontSize="small" />
+                        : <ContentCopy fontSize="small" />}
+                    </IconButton>
+                  </InputAdornment>
+                ),
+              }}
+            />
           </Stack>
         ) : (
           <Stack spacing={2} sx={{ pt: 1 }}>
@@ -155,11 +185,11 @@ export function ShareDialog(props: {
             </Button>
             <Button
               variant="contained"
-              onClick={copy}
-              startIcon={copied ? <CheckIcon /> : <ContentCopy />}
-              color={copied ? 'success' : 'primary'}
+              onClick={() => copy('normal', url)}
+              startIcon={copied === 'normal' ? <CheckIcon /> : <ContentCopy />}
+              color={copied === 'normal' ? 'success' : 'primary'}
             >
-              {copied ? 'Copied!' : 'Copy Link'}
+              {copied === 'normal' ? 'Copied!' : 'Copy Link'}
             </Button>
           </>
         ) : (

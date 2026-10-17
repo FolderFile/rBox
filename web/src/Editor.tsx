@@ -29,9 +29,9 @@ import { ConfirmDialog } from './dialogs'
 
 const FONT_SIZES = [13, 16, 19]
 
-function langFor(name: string): { code: Extension[]; label: string } {
+function langFor(name: string): { code: Extension[]; label: string; notepad?: boolean } {
   const ext = name.split('.').pop()?.toLowerCase() ?? ''
-  const plain = (label: string) => ({ code: [], label })
+  const plain = (label: string, notepad = false) => ({ code: [] as Extension[], label, notepad })
   switch (ext) {
     case 'html': case 'htm': return { code: [html()], label: 'HTML' }
     case 'xml': case 'svg': return { code: [xml()], label: 'XML' }
@@ -49,7 +49,8 @@ function langFor(name: string): { code: Extension[]; label: string } {
     case 'yaml': case 'yml': return { code: [yaml()], label: 'YAML' }
     case 'toml': return plain('TOML')
     case 'sh': case 'bash': return plain('Shell')
-    default: return plain(ext ? ext.toUpperCase() : 'Text')
+    case 'txt': case 'log': return plain('Text', true)
+    default: return plain(ext ? ext.toUpperCase() : 'Text', true)
   }
 }
 
@@ -69,11 +70,11 @@ export default function TextEditor({
   const [loading, setLoading] = useState(true)
   const [dirty, setDirty] = useState(false)
   const [error, setError] = useState('')
-  const [wrap, setWrap] = useState(false)
   const [fontIdx, setFontIdx] = useState(0)
   const [confirmClose, setConfirmClose] = useState(false)
   const [notice, setNotice] = useState('')
   const lang = langFor(name)
+  const [wrap, setWrap] = useState(!!lang.notepad)
 
   useEffect(() => {
     api
@@ -138,7 +139,14 @@ export default function TextEditor({
     ),
     ...lang.code,
     ...(wrap ? [EditorView.lineWrapping] : []),
-    EditorView.theme({ '&': { fontSize: `${FONT_SIZES[fontIdx]}px` } }),
+    EditorView.theme({
+      '&': { fontSize: `${FONT_SIZES[fontIdx]}px`, height: '100%' },
+      '.cm-editor': { height: '100%' },
+      '.cm-scroller': {
+        overflow: 'auto',
+        fontFamily: '"Roboto Mono", "Consolas", monospace',
+      },
+    }),
   ]
 
   return (
@@ -206,7 +214,16 @@ export default function TextEditor({
           </IconButton>
         </Tooltip>
       </Box>
-      <DialogContent sx={{ display: 'flex', flexDirection: 'column', overflow: 'hidden', p: 0 }}>
+      <DialogContent
+        sx={{
+          display: 'flex',
+          flexDirection: 'column',
+          flex: 1,
+          height: '100%',
+          overflow: 'hidden',
+          p: 0,
+        }}
+      >
         {error && (
           <Typography variant="caption" color="error" sx={{ px: 2, pt: 1 }}>
             {error}
@@ -215,13 +232,18 @@ export default function TextEditor({
         {loading ? (
           <CircularProgress size={24} sx={{ m: 'auto' }} />
         ) : (
-          <Box sx={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
+          <Box sx={{ flex: 1, minHeight: 0 }}>
             <CodeMirror
               value={content}
               extensions={extensions}
               theme={mode === 'dark' ? oneDark : 'light'}
               height="100%"
-              basicSetup={{ highlightActiveLine: true, foldGutter: true }}
+              style={{ height: '100%' }}
+              basicSetup={{
+                highlightActiveLine: !lang.notepad,
+                foldGutter: !lang.notepad,
+                lineNumbers: !lang.notepad,
+              }}
               onChange={v => {
                 setContent(v)
                 setDirty(true)

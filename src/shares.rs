@@ -4,8 +4,8 @@ use crate::state::AppState;
 use crate::storage;
 use crate::transfer;
 use axum::extract::{Path, Query, State};
-use axum::http::HeaderMap;
-use axum::response::Response;
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode};
+use axum::response::{IntoResponse, Response};
 use axum::Json;
 use chrono::Utc;
 use rand::distributions::{Alphanumeric, DistString};
@@ -225,6 +225,101 @@ pub async fn download(
     if tokio::fs::metadata(&target).await?.is_dir() {
         transfer::serve_zip(&root, &share.file_path).await
     } else {
-        transfer::serve_file(&root, &share.file_path, &headers).await
+        transfer::serve_file(&root, &share.file_path, &headers, false).await
     }
+}
+
+async fn share_name_size(state: &AppState, share: &Share) -> Result<(String, u64)> {
+    let root = state.user_dir(share.user_id);
+    let target = storage::sanitize(&root, &share.file_path)?;
+    let meta = tokio::fs::metadata(&target).await?;
+    let name = target
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_else(|| "files".into());
+    let size = if meta.is_dir() {
+        storage::disk_usage(&target)
+    } else {
+        meta.len()
+    };
+    Ok((name, size))
+}
+
+/// raw stream for direct embedding: inline disposition and the true mime so
+/// Discord/Telegram render media inline instead of offering a download.
+/// `/s/{token}/raw/{filename}` exists so the URL ends in a real extension.
+pub async fn raw(
+    State(state): State<AppState>,
+    Path(token): Path<String>,
+    Query(q): Query<PublicQuery>,
+    headers: HeaderMap,
+) -> Result<Response> {
+    raw_impl(state, token, q.password, headers).await
+}
+
+pub async fn raw_named(
+    State(state): State<AppState>,
+    Path((token, _filename)): Path<(String, String)>,
+    Query(q): Query<PublicQuery>,
+    headers: HeaderMap,
+) -> Result<Response> {
+    raw_impl(state, token, q.password, headers).await
+}
+
+async fn raw_impl(
+    state: AppState,
+    token: String,
+    password: Option<String>,
+    headers: HeaderMap,
+) -> Result<Response> {
+    let (share, _) = resolve(&state, &token, &headers, password.as_deref()).await?;
+    let root = state.user_dir(share.user_id);
+    transfer::serve_file(&root, &share.file_path, &headers, true).await
+}
+
+fn html_escape(s: &str) -> String {
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+}
+
+/// landing page for a share: the SPA shell with OpenGraph tags injected so
+/// link unfurlers show a clean card. no og:image on purpose: the card points
+/// at the preview page, the /raw URL is the one for media embeds.
+pub async fn landing(State(state): State<AppState>, Path(token): Path<String>) -> Result<Response> {
+    let share = {
+        let conn = state.conn().await;
+        find_share(&conn, &token)?
+    };
+    let mut html = String::from_utf8_lossy(&crate::static_files::index_bytes()?.data).into_owned();
+    if let Some(share) = share {
+        let (name, size) = share_name_size(&state, &share).await?;
+        let name = html_escape(&name);
+        let size = crate::size::format_size(size);
+        let description = html_escape(&format!(
+            "Shared via rbox — self-hosted file vault. Click to preview or download {name}."
+        ));
+        let meta = format!(
+            "<meta property=\"og:title\" content=\"{name} ({size})\" />\
+             <meta property=\"og:site_name\" content=\"rbox\" />\
+             <meta property=\"og:description\" content=\"{description}\" />\
+             <meta name=\"theme-color\" content=\"#e53935\" />"
+        );
+        // vite always emits a <head>; fall back to prepending if that changes
+        if let Some(i) = html.find("</head>") {
+            html.insert_str(i, &meta);
+        } else {
+            html = format!("{meta}{html}");
+        }
+    }
+    Ok((
+        StatusCode::OK,
+        [
+            (header::CONTENT_TYPE, HeaderValue::from_static("text/html")),
+            (header::CACHE_CONTROL, HeaderValue::from_static("no-cache")),
+        ],
+        html,
+    )
+        .into_response())
 }

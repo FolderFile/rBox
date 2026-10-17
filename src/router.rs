@@ -21,8 +21,11 @@ pub fn build(state: AppState) -> Router {
         .route("/api/files/zip", get(transfer::zip))
         .route("/api/shares", get(shares::list).post(shares::create))
         .route("/api/shares/{token}", delete(shares::revoke))
+        .route("/s/{token}", get(shares::landing))
         .route("/s/{token}/info", get(shares::info))
         .route("/s/{token}/download", get(shares::download))
+        .route("/s/{token}/raw", get(shares::raw))
+        .route("/s/{token}/raw/{filename}", get(shares::raw_named))
         .route(
             "/api/admin/users",
             get(admin::list_users).post(admin::create_user),

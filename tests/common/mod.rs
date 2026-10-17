@@ -137,3 +137,14 @@ pub fn set_used(ctx: &Ctx, used: u64) {
         &format!("UPDATE users SET used_bytes = {used}"),
     );
 }
+
+pub async fn send_full(
+    ctx: &Ctx,
+    req: Request<Body>,
+) -> (StatusCode, axum::http::HeaderMap, Vec<u8>) {
+    let res = ctx.app.clone().oneshot(req).await.unwrap();
+    let status = res.status();
+    let headers = res.headers().clone();
+    let bytes = res.into_body().collect().await.unwrap().to_bytes();
+    (status, headers, bytes.to_vec())
+}

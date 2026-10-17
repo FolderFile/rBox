@@ -4,9 +4,10 @@ import {
   TableCell, TableHead, TableRow, Tooltip, Typography,
 } from '@mui/material'
 import ContentCopy from '@mui/icons-material/ContentCopy'
+import AttachFile from '@mui/icons-material/AttachFile'
 import DeleteOutline from '@mui/icons-material/DeleteOutline'
 import LockOutlined from '@mui/icons-material/LockOutlined'
-import { api, fmtDate, ShareRow } from './api'
+import { api, baseName, fmtDate, ShareRow } from './api'
 import { ConfirmDialog } from './dialogs'
 
 export default function Shares() {
@@ -31,6 +32,12 @@ export default function Shares() {
     const url = `${location.origin}/s/${token}`
     await navigator.clipboard.writeText(url).catch(() => {})
     setSnack('Link copied to clipboard')
+  }
+
+  const copyRaw = async (s: ShareRow) => {
+    const url = `${location.origin}/s/${s.token}/raw/${encodeURIComponent(baseName(s.path))}`
+    await navigator.clipboard.writeText(url).catch(() => {})
+    setSnack('Raw link copied to clipboard')
   }
 
   const revoke = async (s: ShareRow) => {
@@ -74,6 +81,11 @@ export default function Shares() {
                     <Tooltip title="Copy link">
                       <IconButton size="small" onClick={() => copy(s.token)}>
                         <ContentCopy fontSize="small" />
+                      </IconButton>
+                    </Tooltip>
+                    <Tooltip title="Copy raw link (direct file / embeds media in chat)">
+                      <IconButton size="small" onClick={() => copyRaw(s)}>
+                        <AttachFile fontSize="small" />
                       </IconButton>
                     </Tooltip>
                   </Box>

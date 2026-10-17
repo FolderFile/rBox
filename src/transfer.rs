@@ -23,7 +23,10 @@ pub struct DirReq {
 
 /// attachment header with an ascii-quoted fallback plus RFC 5987 filename* so
 /// non-ascii names survive browsers that mangle the plain parameter
-fn content_disposition(name: &str) -> String {
+fn content_disposition(name: &str, inline: bool) -> String {
+    if inline {
+        return format!("inline; filename=\"{}\"", name.replace('"', ""));
+    }
     let fallback: String = name
         .chars()
         .map(|c| {
@@ -144,15 +147,18 @@ pub async fn download(
     headers: HeaderMap,
 ) -> Result<Response> {
     let root = state.user_dir(auth.user.id);
-    serve_file(&root, &path, &headers).await
+    serve_file(&root, &path, &headers, false).await
 }
 
 /// range-aware file download rooted at `root`; shared by the authenticated
 /// download handler and public share downloads
+/// `inline` streams the file for in-browser display (og embeds, media
+/// players); `attachment` forces a download
 pub async fn serve_file(
     root: &std::path::Path,
     path: &str,
     headers: &HeaderMap,
+    inline: bool,
 ) -> Result<Response> {
     let file = storage::sanitize(root, path)?;
     let meta = tokio::fs::metadata(&file).await?;
@@ -167,7 +173,7 @@ pub async fn serve_file(
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "download".into());
-    let disposition = content_disposition(&file_name);
+    let disposition = content_disposition(&file_name, inline);
 
     let Some(range) = headers.get(header::RANGE) else {
         let stream = ReaderStream::new(tokio::fs::File::open(&file).await?);
@@ -305,7 +311,7 @@ pub async fn serve_zip(root: &std::path::Path, path: &str) -> Result<Response> {
             (header::CONTENT_TYPE, "application/zip".to_string()),
             (
                 header::CONTENT_DISPOSITION,
-                content_disposition(&format!("{archive_name}.zip")),
+                content_disposition(&format!("{archive_name}.zip"), false),
             ),
         ],
         Body::from_stream(ReaderStream::new(rx)),
@@ -372,12 +378,18 @@ mod tests {
 
     #[test]
     fn disposition_escapes_non_ascii() {
-        let d = content_disposition("report final.txt");
+        let d = content_disposition("report final.txt", false);
         assert!(d.contains("filename=\"report final.txt\""));
         assert!(d.contains("filename*=UTF-8''report%20final.txt"));
 
-        let d = content_disposition("Bericht für Köln.zip");
+        let d = content_disposition("Bericht für Köln.zip", false);
         assert!(d.contains("filename=\"Bericht f_r K_ln.zip\""));
         assert!(d.contains("filename*=UTF-8''Bericht%20f%C3%BCr%20K%C3%B6ln.zip"));
     }
+}
+
+#[test]
+fn inline_disposition_has_no_rfc5987_suffix() {
+    let d = content_disposition("pic.png", true);
+    assert_eq!(d, r#"inline; filename="pic.png""#);
 }

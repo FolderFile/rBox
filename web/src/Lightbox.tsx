@@ -54,6 +54,7 @@ export function Lightbox({
   const item = items[index]
   const [zoom, setZoom] = useState(1)
   const [pan, setPan] = useState({ x: 0, y: 0 })
+  const [dragging, setDragging] = useState(false)
   const [touching, setTouching] = useState(false)
   const many = items.length > 1
 
@@ -64,7 +65,20 @@ export function Lightbox({
   }, [index])
 
   const zoomTo = (z: number) => {
-    const next = Math.min(Math.max(z, 0.25), 8)
+    const next = Math.min(Math.max(z, 1), 5)
+    if (next <= 1) setPan({ x: 0, y: 0 })
+    setZoom(next)
+  }
+
+  // zoom while keeping the point under the cursor stationary
+  const zoomAt = (factor: number, cx: number, cy: number, rect: DOMRect) => {
+    const px = cx - rect.left - rect.width / 2
+    const py = cy - rect.top - rect.height / 2
+    const next = Math.min(Math.max(zoom * factor, 1), 5)
+    setPan({
+      x: px - ((px - pan.x) * next) / zoom,
+      y: py - ((py - pan.y) * next) / zoom,
+    })
     if (next <= 1) setPan({ x: 0, y: 0 })
     setZoom(next)
   }
@@ -73,6 +87,9 @@ export function Lightbox({
   const gesture = useRef<{ pinch?: { dist: number; zoom: number }; pan?: { x: number; y: number }; lastTap: number }>({
     lastTap: 0,
   })
+  // mouse drag state: { startCursor, startPan, moved }
+  const mouse = useRef<{ sx: number; sy: number; px: number; py: number; moved: number } | null>(null)
+  const viewport = useRef<HTMLDivElement>(null)
 
   const touchDist = (t: React.TouchList) =>
     Math.hypot(t[0].clientX - t[1].clientX, t[0].clientY - t[1].clientY)
@@ -109,7 +126,7 @@ export function Lightbox({
       g.pinch = undefined
       g.pan = undefined
       setTouching(false)
-      // single-finger tap that never moved counts as a tap for double-tap
+      // a quick single-finger release counts as a tap for double-tap
       const now = Date.now()
       if (now - g.lastTap < 300) {
         zoomTo(zoom > 1 ? 1 : 2.5)
@@ -122,6 +139,37 @@ export function Lightbox({
       g.pan = undefined
     }
   }
+
+  const onWheel = (e: React.WheelEvent) => {
+    if (!isImage(item)) return
+    e.preventDefault()
+    const rect = viewport.current?.getBoundingClientRect()
+    if (!rect) return
+    zoomAt(e.deltaY < 0 ? 1.1 : 1 / 1.1, e.clientX, e.clientY, rect)
+  }
+
+  const onMouseDown = (e: React.MouseEvent) => {
+    if (!isImage(item) || zoom <= 1) return
+    e.preventDefault()
+    mouse.current = { sx: e.clientX, sy: e.clientY, px: pan.x, py: pan.y, moved: 0 }
+    setDragging(true)
+  }
+
+  const onMouseMove = (e: React.MouseEvent) => {
+    const m = mouse.current
+    if (!m) return
+    const dx = e.clientX - m.sx
+    const dy = e.clientY - m.sy
+    m.moved = Math.max(m.moved, Math.abs(dx) + Math.abs(dy))
+    setPan({ x: m.px + dx, y: m.py + dy })
+  }
+
+  const endMouse = () => {
+    mouse.current = null
+    setDragging(false)
+  }
+
+  const onDoubleClick = () => zoomTo(zoom > 1 ? 1 : 2.5)
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -136,6 +184,13 @@ export function Lightbox({
   if (!item) return null
   const url = urlOf(item)
   const image = isImage(item)
+  const cursor = !image
+    ? 'default'
+    : dragging
+      ? 'grabbing'
+      : zoom > 1
+        ? 'grab'
+        : 'zoom-in'
 
   return (
     <Box
@@ -146,23 +201,22 @@ export function Lightbox({
         zIndex: t => t.zIndex.modal + 1,
         bgcolor: 'rgba(0, 0, 0, 0.92)',
         display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
+        flexDirection: 'column',
       }}
     >
       <Box
         sx={{
-          position: 'absolute',
-          top: 0,
-          left: 0,
-          right: 0,
+          position: 'relative',
+          zIndex: 20,
           display: 'flex',
           alignItems: 'center',
           gap: 1,
           px: 2,
           py: 1,
-          bgcolor: 'rgba(0, 0, 0, 0.45)',
+          bgcolor: 'rgba(0, 0, 0, 0.75)',
+          backdropFilter: 'blur(6px)',
           color: 'common.white',
+          flexShrink: 0,
         }}
         onClick={ev => ev.stopPropagation()}
       >
@@ -174,7 +228,7 @@ export function Lightbox({
         </Typography>
         {image && toolbarBtn('Zoom in', () => zoomTo(zoom * 1.25), <Add fontSize="small" />)}
         {image && toolbarBtn('Zoom out', () => zoomTo(zoom / 1.25), <Remove fontSize="small" />)}
-        {image && toolbarBtn('Reset zoom', () => zoomTo(1), <RestartAlt fontSize="small" />)}
+        {image && toolbarBtn('Reset zoom (100%)', () => zoomTo(1), <RestartAlt fontSize="small" />)}
         {toolbarBtn('Download', () => {
           const a = document.createElement('a')
           a.href = url
@@ -185,50 +239,70 @@ export function Lightbox({
         {toolbarBtn('Close', onClose, <CloseIcon />)}
       </Box>
 
-      {many && (
-        <IconButton
-          onClick={ev => {
-            ev.stopPropagation()
-            onIndex((index - 1 + items.length) % items.length)
-          }}
-          sx={{
-            position: 'absolute',
-            left: 8,
-            color: 'common.white',
-            bgcolor: 'rgba(255,255,255,0.1)',
-            '&:hover': { bgcolor: 'rgba(255,255,255,0.2)' },
-          }}
-        >
-          <ChevronLeft />
-        </IconButton>
-      )}
-      {many && (
-        <IconButton
-          onClick={ev => {
-            ev.stopPropagation()
-            onIndex((index + 1) % items.length)
-          }}
-          sx={{
-            position: 'absolute',
-            right: 8,
-            color: 'common.white',
-            bgcolor: 'rgba(255,255,255,0.1)',
-            '&:hover': { bgcolor: 'rgba(255,255,255,0.2)' },
-          }}
-        >
-          <ChevronRight />
-        </IconButton>
-      )}
-
       <Box
+        ref={viewport}
+        onWheel={onWheel}
+        onMouseDown={onMouseDown}
+        onMouseMove={onMouseMove}
+        onMouseUp={endMouse}
+        onMouseLeave={endMouse}
+        onDoubleClick={onDoubleClick}
         onClick={ev => ev.stopPropagation()}
-        sx={{ display: 'flex', maxWidth: '90vw', maxHeight: '82vh', touchAction: 'none' }}
+        sx={{
+          flex: 1,
+          position: 'relative',
+          zIndex: 1,
+          overflow: 'hidden',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'center',
+          cursor,
+          touchAction: 'none',
+        }}
       >
+        {many && (
+          <IconButton
+            onClick={ev => {
+              ev.stopPropagation()
+              onIndex((index - 1 + items.length) % items.length)
+            }}
+            sx={{
+              position: 'absolute',
+              left: 8,
+              color: 'common.white',
+              bgcolor: 'rgba(255,255,255,0.1)',
+              zIndex: 2,
+              '&:hover': { bgcolor: 'rgba(255,255,255,0.2)' },
+            }}
+          >
+            <ChevronLeft />
+          </IconButton>
+        )}
+        {many && (
+          <IconButton
+            onClick={ev => {
+              ev.stopPropagation()
+              onIndex((index + 1) % items.length)
+            }}
+            sx={{
+              position: 'absolute',
+              right: 8,
+              color: 'common.white',
+              bgcolor: 'rgba(255,255,255,0.1)',
+              zIndex: 2,
+              '&:hover': { bgcolor: 'rgba(255,255,255,0.2)' },
+            }}
+          >
+            <ChevronRight />
+          </IconButton>
+        )}
+
         {image ? (
           <img
             key={url}
             src={url}
             alt={item.name}
+            draggable={false}
             onTouchStart={onTouchStart}
             onTouchMove={onTouchMove}
             onTouchEnd={onTouchEnd}
@@ -237,8 +311,8 @@ export function Lightbox({
               maxHeight: '82vh',
               objectFit: 'contain',
               transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})`,
-              // snap instantly while the finger is down so the gesture tracks 1:1
-              transition: touching ? 'none' : 'transform 150ms ease',
+              // snap instantly while a finger is down so gestures track 1:1
+              transition: touching || dragging ? 'none' : 'transform 150ms ease',
               touchAction: 'none',
               userSelect: 'none',
             }}
@@ -259,8 +333,7 @@ export function Lightbox({
               justifyContent: 'center',
             }}
           >
-            {/* eslint-disable-next-line jsx-a11y/media-has-caption */}
-            <audio key={url} controls autoPlay style={{ width: '100%' }} src={url} />
+            <audio controls autoPlay style={{ width: '100%' }} src={url} />
           </Box>
         )}
       </Box>

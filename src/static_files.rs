@@ -8,6 +8,11 @@ use rust_embed::RustEmbed;
 #[folder = "web/dist/"]
 struct Assets;
 
+/// embedded SPA shell, shared by the fallback and the share landing handler
+pub fn index_bytes() -> Result<rust_embed::EmbeddedFile> {
+    Assets::get("index.html").ok_or_else(|| other("frontend is not embedded in this build"))
+}
+
 /// embedded SPA. any non-GET (or missing) asset falls back to index.html so
 /// client-side routing works; hashed files under /assets/ get immutable
 /// caching, everything else revalidates on each load.
@@ -24,8 +29,7 @@ pub async fn serve(uri: Uri) -> Result<Response> {
         None => {
             // client-side route: always the SPA shell, so always text/html
             (
-                Assets::get("index.html")
-                    .ok_or_else(|| other("frontend is not embedded in this build"))?,
+                index_bytes()?,
                 "no-cache".to_string(),
                 "text/html".to_string(),
             )

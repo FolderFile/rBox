@@ -1,6 +1,6 @@
 import { createTheme } from '@mui/material/styles'
 
-// classic MD2 blue, not the M3 tonal palette
+// classic MD2 crimson red, not the M3 tonal palette
 const base = {
   typography: {
     fontFamily: '"Roboto", "Helvetica", "Arial", sans-serif',
@@ -12,7 +12,7 @@ const base = {
 export const light = createTheme({
   ...base,
   palette: {
-    primary: { main: '#1976d2' },
+    primary: { main: '#d32f2f' },
     secondary: { main: '#dc004e' },
     background: { default: '#fafafa', paper: '#ffffff' },
   },
@@ -30,7 +30,7 @@ export const dark = createTheme({
   ...base,
   palette: {
     mode: 'dark',
-    primary: { main: '#2196f3' },
+    primary: { main: '#e53935' },
     secondary: { main: '#f50057' },
     background: { default: '#121212', paper: '#1e1e1e' },
   },

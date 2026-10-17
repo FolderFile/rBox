@@ -26,6 +26,12 @@ tower = { version = "0.5.3", features = ["util"] }
 bytes = "1.12.1"
 futures-util = { version = "0.3.34", default-features = false, features = ["io", "std"] }
 rust-embed = "8.13.0"
+zip = { version = "9.0.4", default-features = false, features = ["aes-crypto", "deflate", "bzip2", "time"] }
+tar = "0.4"
+flate2 = "1"
+zstd = "0.13"
+xz2 = "0.1"
+sha2 = "0.10"
 
 [profile.release]
 opt-level = 3

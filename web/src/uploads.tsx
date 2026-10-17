@@ -20,6 +20,7 @@ export interface UploadJob {
 interface UploadCtx {
   upload: (dir: string, files: File[]) => void
   clearFinished: () => void
+  pendingCount: number
 }
 
 const Ctx = createContext<UploadCtx>(null as any)
@@ -82,7 +83,13 @@ export function UploadProvider({
   )
 
   return (
-    <Ctx.Provider value={{ upload, clearFinished: () => setJobs(js => js.filter(j => !j.done)) }}>
+    <Ctx.Provider
+      value={{
+        upload,
+        clearFinished: () => setJobs(js => js.filter(j => !j.done)),
+        pendingCount: jobs.filter(j => !j.done).length,
+      }}
+    >
       {children}
       <DropZone upload={upload} cwd={cwd} />
       <Tray

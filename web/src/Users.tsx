@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import {
   Alert, Box, Button, Checkbox, Chip, Dialog, DialogActions, DialogContent,
   DialogTitle, FormControlLabel, IconButton, LinearProgress, MenuItem, Paper,
-  Snackbar, Stack, Table, TableBody, TableCell, TableHead, TableRow, TextField,
+  Snackbar, Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow, TextField,
   Tooltip, Typography,
 } from '@mui/material'
 import Add from '@mui/icons-material/PersonAddAlt1Outlined'
@@ -47,7 +47,7 @@ export default function Users() {
       </Box>
       {error && <Alert severity="error" sx={{ mb: 1 }}>{error}</Alert>}
 
-      <Paper variant="outlined">
+      <TableContainer component={Paper} variant="outlined" sx={{ width: '100%', overflowX: 'auto', borderRadius: 2 }}>
         <Table size="small">
           <TableHead>
             <TableRow>
@@ -105,7 +105,7 @@ export default function Users() {
             })}
           </TableBody>
         </Table>
-      </Paper>
+      </TableContainer>
 
       {create && (
         <CreateDialog

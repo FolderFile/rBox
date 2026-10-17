@@ -191,7 +191,7 @@ export default function ShareLanding() {
             </Button>
           </Box>
           <Typography variant="caption" color="text.secondary">
-            Raw links stream the file directly — images and video embed inside Discord and Telegram.
+            Direct stream URL for media embeds and CLI tools.
           </Typography>
         </Stack>
       </Paper>

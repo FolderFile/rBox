@@ -1,7 +1,7 @@
 use crate::error::{AppError, Result};
 use crate::state::AppState;
 use crate::users::{self, User};
-use axum::extract::{FromRequestParts, State};
+use axum::extract::{FromRequestParts, Path, State};
 use axum::http::header;
 use axum::http::request::Parts;
 use axum::http::HeaderMap;
@@ -22,6 +22,18 @@ fn token_from_headers(headers: &HeaderMap) -> Option<String> {
             .strip_prefix(&format!("{COOKIE_NAME}="))
             .map(str::to_string)
     })
+}
+
+/// best-effort client key for the rate limiter; behind the cloudflare tunnel
+/// the real ip arrives in x-forwarded-for
+fn client_key(headers: &HeaderMap, username: &str) -> String {
+    let ip = headers
+        .get("x-forwarded-for")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.split(',').next())
+        .unwrap_or("local")
+        .trim();
+    format!("{ip}|{}", username.to_lowercase())
 }
 
 fn user_json(u: &User) -> serde_json::Value {
@@ -57,7 +69,16 @@ pub struct LoginReq {
     password: String,
 }
 
-pub async fn login(State(state): State<AppState>, Json(req): Json<LoginReq>) -> Result<Response> {
+pub async fn login(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(req): Json<LoginReq>,
+) -> Result<Response> {
+    let key = client_key(&headers, &req.username);
+    if !state.login_allowed(&key).await {
+        return Err(AppError::TooManyRequests);
+    }
+
     let hash = {
         let conn = state.conn().await;
         users::find_by_username(&conn, &req.username)?
@@ -75,14 +96,21 @@ pub async fn login(State(state): State<AppState>, Json(req): Json<LoginReq>) -> 
         .as_deref()
         .is_some_and(|h| users::verify_password(&req.password, h));
     if !ok {
+        state.record_login_failure(&key).await;
         return Err(AppError::Unauthorized);
     }
+    state.clear_login_failures(&key).await;
 
     let conn = state.conn().await;
     let user = users::find_by_username(&conn, &req.username)?.ok_or(AppError::Unauthorized)?;
     drop(conn);
 
-    let token = state.create_session(user.id).await;
+    let agent = headers
+        .get(header::USER_AGENT)
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("")
+        .to_string();
+    let token = state.create_session(user.id, &agent).await;
     let cookie = format!("{COOKIE_NAME}={token}; Path=/; HttpOnly; SameSite=Lax; Max-Age=604800");
     Ok(([(header::SET_COOKIE, cookie)], Json(user_json(&user))).into_response())
 }
@@ -101,4 +129,72 @@ pub async fn logout(State(state): State<AppState>, headers: HeaderMap) -> Respon
 
 pub async fn me(auth: AuthUser) -> Json<serde_json::Value> {
     Json(user_json(&auth.user))
+}
+
+#[derive(Deserialize)]
+pub struct PasswordChangeReq {
+    current_password: String,
+    new_password: String,
+}
+
+/// changing your own password revokes every other session so a stolen cookie
+/// dies with the old secret
+pub async fn change_password(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    headers: HeaderMap,
+    Json(req): Json<PasswordChangeReq>,
+) -> Result<Json<serde_json::Value>> {
+    if req.new_password.len() < 8 {
+        return Err(crate::error::bad("password must be at least 8 characters"));
+    }
+    let conn = state.conn().await;
+    let hash: String = conn.query_row(
+        "SELECT password_hash FROM users WHERE id = ?1",
+        rusqlite::params![auth.user.id],
+        |r| r.get(0),
+    )?;
+    if !users::verify_password(&req.current_password, &hash) {
+        return Err(crate::error::bad("current password is wrong"));
+    }
+    users::set_password(&conn, auth.user.id, &req.new_password)?;
+    drop(conn);
+
+    let token = token_from_headers(&headers).unwrap_or_default();
+    let revoked = state.revoke_other_sessions(auth.user.id, &token).await;
+    Ok(Json(
+        serde_json::json!({ "ok": true, "revoked_sessions": revoked }),
+    ))
+}
+
+pub async fn sessions(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    headers: HeaderMap,
+) -> Result<Json<serde_json::Value>> {
+    let mut current: Option<u64> = None;
+    if let Some(t) = token_from_headers(&headers) {
+        current = state.get_session_id(&t).await;
+    }
+    let list = state.session_info(auth.user.id).await;
+    let list: Vec<_> = list
+        .into_iter()
+        .map(|mut s| {
+            s["current"] = (Some(s["id"].as_u64().unwrap_or_default()) == current).into();
+            s
+        })
+        .collect();
+    Ok(Json(serde_json::json!({ "sessions": list })))
+}
+
+pub async fn revoke_session(
+    State(state): State<AppState>,
+    auth: AuthUser,
+    Path(id): Path<u64>,
+) -> Result<Json<serde_json::Value>> {
+    if state.revoke_session(auth.user.id, id).await {
+        Ok(Json(serde_json::json!({ "ok": true })))
+    } else {
+        Err(AppError::NotFound("session not found".into()))
+    }
 }

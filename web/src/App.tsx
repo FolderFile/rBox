@@ -8,6 +8,7 @@ import Shell from './Shell'
 import Files from './Files'
 import Shares from './Shares'
 import Users from './Users'
+import Account from './Account'
 import ShareLanding from './ShareLanding'
 
 function Theme({ children }: { children: React.ReactNode }) {
@@ -55,6 +56,8 @@ function AppRoutes() {
       >
         <Route index element={<Files />} />
         <Route path="f/*" element={<Files />} />
+        <Route path="c/:cat" element={<Files />} />
+        <Route path="account" element={<Account />} />
         <Route path="shares" element={<Shares />} />
         <Route path="users" element={user?.is_admin ? <Users /> : <Navigate to="/" replace />} />
       </Route>

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
   Box, Button, Chip, IconButton, Link, Paper, Snackbar, Table, TableBody,
-  TableCell, TableHead, TableRow, Tooltip, Typography,
+  TableCell, TableContainer, TableHead, TableRow, Tooltip, Typography,
 } from '@mui/material'
 import ContentCopy from '@mui/icons-material/ContentCopy'
 import AttachFile from '@mui/icons-material/AttachFile'
@@ -54,7 +54,7 @@ export default function Shares() {
   return (
     <Box>
       <Typography variant="h6" sx={{ mb: 1 }}>Shared Links</Typography>
-      <Paper variant="outlined">
+      <TableContainer component={Paper} variant="outlined" sx={{ width: '100%', overflowX: 'auto', borderRadius: 2 }}>
         <Table size="small">
           <TableHead>
             <TableRow>
@@ -100,7 +100,7 @@ export default function Shares() {
                   )}
                 </TableCell>
                 <TableCell>
-                  {s.requires_password ? <Chip icon={<LockOutlined />} label="protected" size="small" /> : '—'}
+                  {s.requires_password ? <Chip icon={<LockOutlined />} label="protected" size="small" /> : 'none'}
                 </TableCell>
                 <TableCell align="right">
                   <Button color="error" startIcon={<DeleteOutline />} onClick={() => setPending(s)}>
@@ -120,7 +120,7 @@ export default function Shares() {
             )}
           </TableBody>
         </Table>
-      </Paper>
+      </TableContainer>
 
       {pending && (
         <ConfirmDialog

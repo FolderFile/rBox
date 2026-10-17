@@ -99,3 +99,57 @@ export function baseName(path: string): string {
   const i = path.lastIndexOf('/')
   return i < 0 ? path : path.slice(i + 1)
 }
+export interface StatInfo {
+  name: string
+  path: string
+  is_dir: boolean
+  size: number
+  modified: number
+  mime: string
+  sha256: string | null
+  items: number | null
+}
+
+export interface SearchHit {
+  name: string
+  path: string
+  is_dir: boolean
+  size: number
+  modified: number
+}
+
+export interface ArchiveEntryInfo {
+  name: string
+  is_dir: boolean
+  size: number
+  compressed_size: number
+  encrypted: boolean
+}
+
+export interface SessionRow {
+  id: number
+  created_at: string
+  user_agent: string
+  current: boolean
+}
+
+export interface UserAgent {
+  browser: string
+  os: string
+}
+
+export function parseUserAgent(ua: string): UserAgent {
+  const browser = /Edg\//.test(ua) ? 'Edge'
+    : /OPR\//.test(ua) ? 'Opera'
+    : /Chrome\//.test(ua) ? 'Chrome'
+    : /Firefox\//.test(ua) ? 'Firefox'
+    : /Safari\//.test(ua) ? 'Safari'
+    : ua ? 'Unknown browser' : 'Unknown client'
+  const os = /Android/i.test(ua) ? 'Android'
+    : /iPhone|iPad/i.test(ua) ? 'iOS'
+    : /Mac OS X/i.test(ua) ? 'macOS'
+    : /Windows/i.test(ua) ? 'Windows'
+    : /Linux/i.test(ua) ? 'Linux'
+    : 'Unknown OS'
+  return { browser, os }
+}

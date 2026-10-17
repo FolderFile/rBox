@@ -1,50 +1,82 @@
-import {
-  Box, Chip, Divider, Drawer, IconButton, List, ListItemButton, ListItemIcon,
-  ListItemText, LinearProgress, Tooltip, Typography, useMediaQuery, useTheme,
-  InputBase, Menu, MenuItem,
-} from '@mui/material'
-import DescriptionOutlined from '@mui/icons-material/DescriptionOutlined'
-import ShareIcon from '@mui/icons-material/Share'
-import PeopleAltOutlined from '@mui/icons-material/PeopleAltOutlined'
-import Brightness4 from '@mui/icons-material/Brightness4'
-import Brightness7 from '@mui/icons-material/Brightness7'
-import MenuIcon from '@mui/icons-material/Menu'
-import Logout from '@mui/icons-material/Logout'
-import SearchIcon from '@mui/icons-material/Search'
-import AccountCircleOutlined from '@mui/icons-material/AccountCircleOutlined'
 import { useEffect, useState } from 'react'
+import {
+  Badge, Box, Chip, Divider, Drawer, IconButton, List,
+  ListItemButton, ListItemIcon, ListItemText, LinearProgress, Menu, MenuItem,
+  Tooltip, Typography, useMediaQuery, useTheme,
+} from '@mui/material'
+import DescriptionRounded from '@mui/icons-material/DescriptionRounded'
+import ImageIcon from '@mui/icons-material/ImageRounded'
+import MovieRounded from '@mui/icons-material/MovieRounded'
+import AudiotrackRounded from '@mui/icons-material/AudiotrackRounded'
+import ArticleRounded from '@mui/icons-material/ArticleRounded'
+import CodeRounded from '@mui/icons-material/CodeRounded'
+import FolderZipRounded from '@mui/icons-material/FolderZipRounded'
+import ShareIcon from '@mui/icons-material/ShareRounded'
+import PeopleAltRounded from '@mui/icons-material/PeopleAltRounded'
+import SecurityRounded from '@mui/icons-material/SecurityRounded'
+import Brightness4 from '@mui/icons-material/Brightness4Rounded'
+import Brightness7 from '@mui/icons-material/Brightness7Rounded'
+import MenuIcon from '@mui/icons-material/MenuRounded'
+import Logout from '@mui/icons-material/LogoutRounded'
+import SearchRounded from '@mui/icons-material/SearchRounded'
+import AccountCircleRounded from '@mui/icons-material/AccountCircleRounded'
+import CloudUploadRounded from '@mui/icons-material/CloudUploadRounded'
+import RefreshRounded from '@mui/icons-material/RefreshRounded'
+import Inventory2Rounded from '@mui/icons-material/Inventory2Rounded'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { fmtSize } from './api'
+import { api, fmtSize } from './api'
 import { useAuth } from './auth'
-import { UploadProvider } from './uploads'
+import { useUploads } from './uploads'
 import { useThemeToggle } from './App'
+import { CommandPalette } from './CommandPalette'
 
-const DRAWER_W = 240
+const DRAWER_W = 260
 
-export function QuotaBar() {
-  const { user } = useAuth()
+function QuotaCard({ compact }: { compact: boolean }) {
+  const { user, refresh } = useAuth()
+  const [busy, setBusy] = useState(false)
   if (!user) return null
   const pct = user.quota_bytes ? Math.min((user.used_bytes / user.quota_bytes) * 100, 100) : 0
+  const recalc = async () => {
+    setBusy(true)
+    try {
+      await api.post(`/api/admin/users/${encodeURIComponent(user.username)}/recalc`)
+      await refresh()
+    } catch {
+      // non-admins and races are fine; the value revalidates on next load
+    } finally {
+      setBusy(false)
+    }
+  }
   return (
-    <Box sx={{ px: 2, py: 1.5 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
-        <Typography variant="body2" sx={{ flex: 1, fontWeight: 500 }}>Storage</Typography>
+    <Box sx={{ p: 1.5, m: 1.5, borderRadius: 2, bgcolor: 'action.hover' }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', mb: 0.75 }}>
+        <Typography variant="body2" fontWeight={600} sx={{ flex: 1 }}>Storage</Typography>
         <Chip
           size="small"
           label={`${pct.toFixed(pct < 10 ? 1 : 0)}%`}
           color={pct > 95 ? 'error' : pct > 80 ? 'warning' : 'default'}
-          sx={{ borderRadius: 1, height: 20, fontSize: '0.7rem' }}
+          sx={{ borderRadius: 2, height: 20 }}
         />
+        {user.is_admin && (
+          <Tooltip title="Recalculate usage">
+            <IconButton size="small" onClick={recalc} disabled={busy} sx={{ ml: 0.5 }}>
+              <RefreshRounded sx={{ fontSize: 15 }} />
+            </IconButton>
+          </Tooltip>
+        )}
       </Box>
       <LinearProgress
         variant="determinate"
         value={pct}
         color={pct > 95 ? 'error' : pct > 80 ? 'warning' : 'primary'}
-        sx={{ height: 8, borderRadius: 4, transition: 'background-color 150ms ease' }}
+        sx={{ height: 6, borderRadius: 3 }}
       />
-      <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'flex', mt: 0.5 }}>
-        {fmtSize(user.used_bytes)} of {fmtSize(user.quota_bytes)} used
-      </Typography>
+      {!compact && (
+        <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block', mt: 0.5 }}>
+          {fmtSize(user.used_bytes)} of {fmtSize(user.quota_bytes)}
+        </Typography>
+      )}
     </Box>
   )
 }
@@ -53,17 +85,52 @@ function DrawerNav({ onPick }: { onPick: () => void }) {
   const { user } = useAuth()
   const nav = useNavigate()
   const { pathname } = useLocation()
-  const items = [
-    { label: 'My Files', icon: <DescriptionOutlined />, to: '/' },
-    { label: 'Shared Links', icon: <ShareIcon />, to: '/shares' },
-    ...(user?.is_admin ? [{ label: 'Users (Admin)', icon: <PeopleAltOutlined />, to: '/users' }] : []),
+
+  const items: { label: string; icon: React.ReactNode; to: string; active?: boolean }[] = [
+    { label: 'All Files', icon: <DescriptionRounded />, to: '/', active: pathname === '/' || pathname.startsWith('/f/') },
+    { label: 'Images', icon: <ImageIcon />, to: '/c/image' },
+    { label: 'Videos', icon: <MovieRounded />, to: '/c/video' },
+    { label: 'Audio', icon: <AudiotrackRounded />, to: '/c/audio' },
+    { label: 'Documents', icon: <ArticleRounded />, to: '/c/doc' },
+    { label: 'Code', icon: <CodeRounded />, to: '/c/code' },
+    { label: 'Archives', icon: <FolderZipRounded />, to: '/c/archive' },
+    { label: 'Shared Links', icon: <ShareIcon />, to: '/shares', active: pathname.startsWith('/shares') },
+    { label: 'Account & Sessions', icon: <SecurityRounded />, to: '/account', active: pathname.startsWith('/account') },
+    ...(user?.is_admin
+      ? [{ label: 'Users & Quotas', icon: <PeopleAltRounded />, to: '/users', active: pathname.startsWith('/users') }]
+      : []),
   ]
+
   return (
-    <List>
-      {items.map(it => (
-        <ListItemButton key={it.to} selected={pathname === it.to} onClick={() => { nav(it.to); onPick() }}>
+    <List sx={{ flex: 1, overflowY: 'auto', py: 0 }}>
+      <ListItemButton selected={items[0].active} onClick={() => { nav('/'); onPick() }} sx={{ borderRadius: 2, mx: 1 }}>
+        <ListItemIcon sx={{ minWidth: 36 }}>{items[0].icon}</ListItemIcon>
+        <ListItemText primary={items[0].label} slotProps={{ primary: { fontWeight: items[0].active ? 600 : 400 } }} />
+      </ListItemButton>
+      <Typography variant="caption" color="text.secondary" sx={{ px: 3, pt: 1.5, pb: 0.5 }}>
+        Categories
+      </Typography>
+      {items.slice(1, 7).map(it => (
+        <ListItemButton
+          key={it.to}
+          selected={!!it.active}
+          onClick={() => { nav(it.to); onPick() }}
+          sx={{ borderRadius: 2, mx: 1 }}
+        >
           <ListItemIcon sx={{ minWidth: 36 }}>{it.icon}</ListItemIcon>
-          <ListItemText primary={it.label} />
+          <ListItemText primary={it.label} slotProps={{ primary: { fontWeight: it.active ? 600 : 400 } }} />
+        </ListItemButton>
+      ))}
+      <Divider sx={{ my: 1 }} />
+      {items.slice(7).map(it => (
+        <ListItemButton
+          key={it.to}
+          selected={!!it.active}
+          onClick={() => { nav(it.to); onPick() }}
+          sx={{ borderRadius: 2, mx: 1 }}
+        >
+          <ListItemIcon sx={{ minWidth: 36 }}>{it.icon}</ListItemIcon>
+          <ListItemText primary={it.label} slotProps={{ primary: { fontWeight: it.active ? 600 : 400 } }} />
         </ListItemButton>
       ))}
     </List>
@@ -76,18 +143,21 @@ export default function Shell() {
   const nav = useNavigate()
   const theme = useTheme()
   const compact = useMediaQuery(theme.breakpoints.down('md'))
-  const { pathname } = useLocation()
-  const onFiles = pathname === '/' || pathname.startsWith('/f/')
-  const [anchor, setAnchor] = useState<HTMLElement | null>(null)
-  const [search, setSearch] = useState('')
+  const { pendingCount } = useUploads()
   const [drawerOpen, setDrawerOpen] = useState(false)
+  const [anchor, setAnchor] = useState<HTMLElement | null>(null)
+  const [paletteOpen, setPaletteOpen] = useState(false)
 
   useEffect(() => {
-    // the explorer reads the filter through this event; a context for one
-    // string would be overkill
-    const t = setTimeout(() => window.dispatchEvent(new CustomEvent('rbox:filter', { detail: search })), 150)
-    return () => clearTimeout(t)
-  }, [search])
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault()
+        setPaletteOpen(o => !o)
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+  }, [])
 
   const doLogout = async () => {
     setAnchor(null)
@@ -95,50 +165,112 @@ export default function Shell() {
     nav('/login')
   }
 
+  const openPaletteResult = (target: string, isDir: boolean) => {
+    if (target.startsWith('cat:')) {
+      nav(`/c/${target.slice(4)}`)
+      return
+    }
+    if (isDir) {
+      nav(`/f/${target}`)
+    } else {
+      const i = target.lastIndexOf('/')
+      if (i > 0) nav(`/f/${target.slice(0, i)}?focus=${encodeURIComponent(target.slice(i + 1))}`)
+      else nav(`/?focus=${encodeURIComponent(target)}`)
+    }
+  }
+
+  const surfaceBar =
+    theme.palette.mode === 'dark'
+      ? { bgcolor: 'rgba(15,17,21,0.85)' }
+      : { bgcolor: 'rgba(248,250,252,0.85)' }
+
   return (
-    <Box sx={{ display: 'flex' }}>
+    <Box sx={{ display: 'flex', minHeight: '100vh' }}>
       <Box
         component="header"
         sx={{
           position: 'fixed',
-          width: { xs: '100%', md: `calc(100% - ${DRAWER_W}px)` },
-          ml: { md: `${DRAWER_W}px` },
+          top: 0,
+          left: 0,
+          right: 0,
           zIndex: theme.zIndex.appBar,
+          ...surfaceBar,
+          backdropFilter: 'blur(12px)',
+          borderBottom: '1px solid',
+          borderColor: 'divider',
         }}
       >
-        <Box sx={{ display: 'flex', alignItems: 'center', bgcolor: 'primary.main', color: 'primary.contrastText', px: 1, minHeight: 48 }}>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, px: 1, minHeight: 56 }}>
           {compact && (
-            <IconButton color="inherit" edge="start" onClick={() => setDrawerOpen(true)} sx={{ mr: 0.5 }}>
+            <IconButton onClick={() => setDrawerOpen(true)} sx={{ color: 'text.primary' }}>
               <MenuIcon />
             </IconButton>
           )}
-          {onFiles && (
-            <Box sx={{ display: 'flex', alignItems: 'center', ml: { xs: 0, md: 2 }, bgcolor: 'rgba(255,255,255,0.15)', borderRadius: 1, px: 1, width: { xs: '50%', sm: 220 } }}>
-              <SearchIcon fontSize="small" />
-              <InputBase
-                placeholder="Filter…"
-                value={search}
-                onChange={e => setSearch(e.target.value)}
-                sx={{ ml: 1, flex: 1, color: 'inherit', fontSize: '0.85rem' }}
-                inputProps={{ 'aria-label': 'filter files' }}
-              />
-            </Box>
-          )}
+          <Box
+            onClick={() => setPaletteOpen(true)}
+            sx={{
+              display: 'flex',
+              alignItems: 'center',
+              gap: 1,
+              flex: 1,
+              maxWidth: 480,
+              cursor: 'text',
+              borderRadius: 2,
+              px: 1.5,
+              py: 0.75,
+              bgcolor: 'action.hover',
+              transition: 'background-color 150ms cubic-bezier(0.2, 0, 0, 1)',
+              '&:hover': { bgcolor: 'action.selected' },
+            }}
+          >
+            <SearchRounded sx={{ fontSize: 18, color: 'text.secondary' }} />
+            <Typography variant="body2" color="text.secondary" sx={{ flex: 1, display: { xs: 'none', sm: 'block' } }}>
+              Search files or press Ctrl+K
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ flex: 1, display: { xs: 'block', sm: 'none' } }}>
+              Search
+            </Typography>
+            <Chip
+              label="Ctrl K"
+              size="small"
+              sx={{
+                display: { xs: 'none', md: 'flex' },
+                borderRadius: 1,
+                height: 18,
+                fontSize: '0.65rem',
+                bgcolor: 'transparent',
+                border: '1px solid',
+                borderColor: 'divider',
+              }}
+            />
+          </Box>
           <Box sx={{ flex: 1 }} />
+          {pendingCount > 0 && (
+            <Tooltip title={`${pendingCount} upload${pendingCount > 1 ? 's' : ''} in progress`}>
+              <Badge badgeContent={pendingCount} color="primary">
+                <CloudUploadRounded sx={{ color: 'text.secondary', mx: 0.5 }} />
+              </Badge>
+            </Tooltip>
+          )}
           <Tooltip title={mode === 'dark' ? 'Light mode' : 'Dark mode'}>
-            <IconButton color="inherit" onClick={toggle} size="small" sx={{ mx: 0.5 }}>
+            <IconButton onClick={toggle} sx={{ color: 'text.secondary' }}>
               {mode === 'dark' ? <Brightness7 /> : <Brightness4 />}
             </IconButton>
           </Tooltip>
-          <IconButton color="inherit" onClick={e => setAnchor(e.currentTarget)} size="small" sx={{ mx: 0.5 }}>
-            <AccountCircleOutlined />
-          </IconButton>
+          <Tooltip title="Account">
+            <IconButton onClick={e => setAnchor(e.currentTarget)} sx={{ color: 'text.primary' }}>
+              <AccountCircleRounded />
+            </IconButton>
+          </Tooltip>
           <Menu anchorEl={anchor} open={!!anchor} onClose={() => setAnchor(null)}>
             <MenuItem disabled>
               {user?.username}{user?.is_admin ? ' (admin)' : ''}
             </MenuItem>
+            <MenuItem onClick={() => { setAnchor(null); nav('/account'); refresh() }}>
+              <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', mr: 1 }}><SecurityRounded fontSize="small" /></Box> Account &amp; Sessions
+            </MenuItem>
             <MenuItem onClick={doLogout}>
-              <Logout fontSize="small" sx={{ mr: 1 }} /> Sign out
+              <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', mr: 1 }}><Logout fontSize="small" /></Box> Sign out
             </MenuItem>
           </Menu>
         </Box>
@@ -148,32 +280,47 @@ export default function Shell() {
         variant={compact ? 'temporary' : 'permanent'}
         open={compact ? drawerOpen : true}
         onClose={() => setDrawerOpen(false)}
-        sx={{
-          width: DRAWER_W,
-          flexShrink: 0,
-          '& .MuiDrawer-paper': { width: DRAWER_W, boxSizing: 'border-box' },
+        slotProps={{
+          paper: {
+            sx: {
+              width: DRAWER_W,
+              boxSizing: 'border-box',
+              borderRight: '1px solid',
+              borderColor: 'divider',
+              display: 'flex',
+              flexDirection: 'column',
+            },
+          },
         }}
       >
-        <Box sx={{ display: 'flex', alignItems: 'center', minHeight: 48, px: 2 }}>
-          <Typography variant="h6" noWrap sx={{ fontWeight: 500 }}>rbox</Typography>
+        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 2, py: 2, flexShrink: 0 }}>
+          <Inventory2Rounded sx={{ color: 'primary.main' }} />
+          <Typography variant="h6" noWrap fontWeight={700}>rbox</Typography>
+          <Chip label="v0.1" size="small" sx={{ borderRadius: 1, height: 18, fontSize: '0.65rem' }} />
         </Box>
         <Divider />
         <DrawerNav onPick={() => setDrawerOpen(false)} />
-        <Box sx={{ flex: 1 }} />
-        <Divider />
-        <QuotaBar />
+        <QuotaCard compact={compact} />
       </Drawer>
 
-      <Box component="main" sx={{ flexGrow: 1, p: 2, minWidth: 0, mt: 6 }}>
-        <UploadProvider
-          onDone={() => {
-            refresh()
-            window.dispatchEvent(new Event('rbox:refresh'))
-          }}
-        >
-          <Outlet />
-        </UploadProvider>
+      <Box
+        component="main"
+        sx={{
+          flexGrow: 1,
+          minWidth: 0,
+          p: { xs: 1.5, sm: 2 },
+          pt: { xs: '68px', sm: '72px' },
+          width: { md: `calc(100% - ${DRAWER_W}px)` },
+        }}
+      >
+        <Outlet />
       </Box>
+
+      <CommandPalette
+        open={paletteOpen}
+        onClose={() => setPaletteOpen(false)}
+        onOpenPath={openPaletteResult}
+      />
     </Box>
   )
 }

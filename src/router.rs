@@ -1,4 +1,8 @@
-use crate::{admin, auth, files, shares, state::AppState, transfer};
+use crate::{admin, archive, auth, files, shares, state::AppState, transfer};
+use axum::extract::Request;
+use axum::http::{header, HeaderValue};
+use axum::middleware::Next;
+use axum::response::Response;
 use axum::routing::{delete, get, patch, post};
 use axum::Router;
 
@@ -7,6 +11,9 @@ pub fn build(state: AppState) -> Router {
         .route("/api/auth/login", post(auth::login))
         .route("/api/auth/logout", post(auth::logout))
         .route("/api/auth/me", get(auth::me))
+        .route("/api/auth/password", post(auth::change_password))
+        .route("/api/auth/sessions", get(auth::sessions))
+        .route("/api/auth/sessions/{id}", delete(auth::revoke_session))
         .route("/api/files", get(files::list).delete(files::delete))
         .route("/api/files/mkdir", post(files::mkdir))
         .route("/api/files/rename", post(files::rename))
@@ -19,6 +26,11 @@ pub fn build(state: AppState) -> Router {
         .route("/api/files/upload", post(transfer::upload))
         .route("/api/files/download", get(transfer::download))
         .route("/api/files/zip", get(transfer::zip))
+        .route("/api/files/stat", get(archive::stat))
+        .route("/api/files/search", get(archive::search))
+        .route("/api/files/archive", post(archive::create))
+        .route("/api/files/archive/list", get(archive::list))
+        .route("/api/files/extract", post(archive::extract))
         .route("/api/shares", get(shares::list).post(shares::create))
         .route("/api/shares/{token}", delete(shares::revoke))
         .route("/s/{token}", get(shares::landing))
@@ -39,7 +51,26 @@ pub fn build(state: AppState) -> Router {
             post(admin::recalc_user),
         )
         .fallback(crate::static_files::serve)
+        .layer(axum::middleware::from_fn(security_headers))
         .with_state(state)
+}
+
+async fn security_headers(req: Request, next: Next) -> Response {
+    let mut res = next.run(req).await;
+    let headers = res.headers_mut();
+    headers.insert(
+        header::X_CONTENT_TYPE_OPTIONS,
+        HeaderValue::from_static("nosniff"),
+    );
+    headers.insert(
+        header::X_FRAME_OPTIONS,
+        HeaderValue::from_static("SAMEORIGIN"),
+    );
+    headers.insert(
+        header::REFERRER_POLICY,
+        HeaderValue::from_static("no-referrer"),
+    );
+    res
 }
 
 #[cfg(test)]

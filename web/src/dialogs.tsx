@@ -107,7 +107,7 @@ export function ShareDialog(props: {
         {url ? (
           <Stack spacing={2} sx={{ pt: 1, minWidth: { sm: 480 } }}>
             <Typography variant="caption" color="text.secondary">
-              Preview Page — rbox UI with file info and download.
+              Preview Page. Opens the rbox download page with file info.
             </Typography>
             <TextField
               inputRef={urlField}
@@ -130,7 +130,7 @@ export function ShareDialog(props: {
               }}
             />
             <Typography variant="caption" color="text.secondary">
-              Raw File — direct stream; embeds images/video/audio in Discord and Telegram, works with curl and wget.
+              Raw File. Direct stream that embeds media in chat apps and works with curl and wget.
             </Typography>
             <TextField
               inputRef={rawField}

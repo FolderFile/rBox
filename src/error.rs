@@ -40,6 +40,17 @@ pub enum AppError {
     #[error("quota exceeded (limit: {0})")]
     QuotaExceeded(String),
 
+    #[error("too many failed logins, wait a minute and try again")]
+    TooManyRequests,
+
+    // code is "password_required" or "invalid_archive_password"; the body
+    // carries {"error": code, "encrypted": true} so the frontend can prompt
+    #[error("{0}")]
+    ArchivePassword(&'static str),
+
+    #[error("archive error: {0}")]
+    Archive(#[from] zip::result::ZipError),
+
     #[error("range not satisfiable")]
     UnsatisfiableRange,
 
@@ -86,6 +97,8 @@ impl AppError {
             AppError::NotFound(_) | AppError::UserNotFound(_) => StatusCode::NOT_FOUND,
             AppError::UserExists(_) | AppError::AlreadyInitialized(_) => StatusCode::CONFLICT,
             AppError::QuotaExceeded(_) => StatusCode::PAYLOAD_TOO_LARGE,
+            AppError::TooManyRequests => StatusCode::TOO_MANY_REQUESTS,
+            AppError::ArchivePassword(_) => StatusCode::UNPROCESSABLE_ENTITY,
             AppError::UnsatisfiableRange => StatusCode::RANGE_NOT_SATISFIABLE,
             _ => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -94,6 +107,13 @@ impl AppError {
 
 impl IntoResponse for AppError {
     fn into_response(self) -> Response {
+        if let AppError::ArchivePassword(code) = self {
+            return (
+                StatusCode::UNPROCESSABLE_ENTITY,
+                Json(serde_json::json!({ "error": code, "encrypted": true })),
+            )
+                .into_response();
+        }
         let status = self.status();
         if status == StatusCode::INTERNAL_SERVER_ERROR {
             eprintln!("internal error: {self:?}");

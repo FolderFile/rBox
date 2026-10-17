@@ -6,6 +6,17 @@ SQLite database all ship in one executable. Every user gets an isolated storage
 directory with a hard byte quota enforced while uploads stream, so the server
 never overcommits disk.
 
+## Install
+
+```
+curl -fsSL https://raw.githubusercontent.com/FolderFile/rBox/main/install.sh | sh
+```
+
+The script picks the right release asset for your platform (static musl build
+on x86_64 Linux) and installs to `/usr/local/bin`, falling back to
+`sudo`/`$HOME/.local/bin` as needed. `RBOX_VERSION` and `RBOX_INSTALL_DIR`
+override the defaults. See `install.sh` for details.
+
 ## Quickstart
 
 ```

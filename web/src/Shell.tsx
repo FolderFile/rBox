@@ -1,4 +1,8 @@
-import { Box, Divider, Drawer, IconButton, List, ListItemButton, ListItemIcon, ListItemText, LinearProgress, Tooltip, Typography, useMediaQuery, useTheme, InputBase, Menu, MenuItem } from '@mui/material'
+import {
+  Box, Chip, Divider, Drawer, IconButton, List, ListItemButton, ListItemIcon,
+  ListItemText, LinearProgress, Tooltip, Typography, useMediaQuery, useTheme,
+  InputBase, Menu, MenuItem,
+} from '@mui/material'
 import DescriptionOutlined from '@mui/icons-material/DescriptionOutlined'
 import ShareIcon from '@mui/icons-material/Share'
 import PeopleAltOutlined from '@mui/icons-material/PeopleAltOutlined'
@@ -20,18 +24,27 @@ const DRAWER_W = 240
 export function QuotaBar() {
   const { user } = useAuth()
   if (!user) return null
-  const pct = user.quota_bytes ? (user.used_bytes / user.quota_bytes) * 100 : 0
+  const pct = user.quota_bytes ? Math.min((user.used_bytes / user.quota_bytes) * 100, 100) : 0
   return (
-    <Box sx={{ px: 2, py: 1 }}>
-      <Typography variant="body2" noWrap sx={{ mb: 0.5 }}>
-        {fmtSize(user.used_bytes)} of {fmtSize(user.quota_bytes)} used
-      </Typography>
+    <Box sx={{ px: 2, py: 1.5 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', mb: 0.5 }}>
+        <Typography variant="body2" sx={{ flex: 1, fontWeight: 500 }}>Storage</Typography>
+        <Chip
+          size="small"
+          label={`${pct.toFixed(pct < 10 ? 1 : 0)}%`}
+          color={pct > 95 ? 'error' : pct > 80 ? 'warning' : 'default'}
+          sx={{ borderRadius: 1, height: 20, fontSize: '0.7rem' }}
+        />
+      </Box>
       <LinearProgress
         variant="determinate"
-        value={Math.min(pct, 100)}
+        value={pct}
         color={pct > 95 ? 'error' : pct > 80 ? 'warning' : 'primary'}
-        sx={{ height: 8, borderRadius: 4 }}
+        sx={{ height: 8, borderRadius: 4, transition: 'background-color 150ms ease' }}
       />
+      <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'flex', mt: 0.5 }}>
+        {fmtSize(user.used_bytes)} of {fmtSize(user.quota_bytes)} used
+      </Typography>
     </Box>
   )
 }

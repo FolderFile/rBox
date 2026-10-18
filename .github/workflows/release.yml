@@ -29,8 +29,9 @@ jobs:
             ext: tar.gz
             use-cross: true
           - asset: rbox-macos-x64
+            # macos-13 is retired; the arm64 runner cross-compiles x64 fine
             target: x86_64-apple-darwin
-            os: macos-13
+            os: macos-latest
             ext: tar.gz
             use-cross: false
           - asset: rbox-macos-arm64

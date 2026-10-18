@@ -12,23 +12,41 @@ env:
 
 jobs:
   build:
-    name: build (${{ matrix.target }})
+    name: ${{ matrix.asset }}
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
         include:
-          - target: x86_64-unknown-linux-musl
+          - asset: rbox-linux-x64
+            target: x86_64-unknown-linux-musl
             os: ubuntu-latest
+            ext: tar.gz
             use-cross: true
-          - target: x86_64-unknown-linux-gnu
+          - asset: rbox-linux-arm64
+            target: aarch64-unknown-linux-musl
             os: ubuntu-latest
+            ext: tar.gz
             use-cross: true
-          - target: aarch64-unknown-linux-gnu
-            os: ubuntu-latest
-            use-cross: true
-          - target: aarch64-apple-darwin
+          - asset: rbox-macos-x64
+            target: x86_64-apple-darwin
+            os: macos-13
+            ext: tar.gz
+            use-cross: false
+          - asset: rbox-macos-arm64
+            target: aarch64-apple-darwin
             os: macos-latest
+            ext: tar.gz
+            use-cross: false
+          - asset: rbox-windows-x64
+            target: x86_64-pc-windows-msvc
+            os: windows-latest
+            ext: zip
+            use-cross: false
+          - asset: rbox-windows-arm64
+            target: aarch64-pc-windows-msvc
+            os: windows-latest
+            ext: zip
             use-cross: false
 
     steps:
@@ -55,33 +73,105 @@ jobs:
         if: matrix.use-cross
         run: cargo install cross --locked
 
-      - name: Build binary
+      - name: Build binary (unix)
+        if: runner.os != 'Windows'
         run: |
-          if ${{ matrix.use-cross }}; then
+          if [ "${{ matrix.use-cross }}" = "true" ]; then
             cross build --release --target ${{ matrix.target }}
           else
             cargo build --release --target ${{ matrix.target }}
           fi
-          tar -C target/${{ matrix.target }}/release -czf rbox-${{ matrix.target }}.tar.gz rbox
+
+      - name: Build binary (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: cargo build --release --target ${{ matrix.target }}
+
+      - name: Package archive
+        shell: bash
+        run: |
+          set -e
+          mkdir -p pkg
+          if [ "${{ matrix.ext }}" = "zip" ]; then
+            cp "target/${{ matrix.target }}/release/rbox.exe" pkg/rbox.exe
+            (cd pkg && 7z a -tzip "../${{ matrix.asset }}.zip" rbox.exe)
+          else
+            cp "target/${{ matrix.target }}/release/rbox" pkg/rbox
+            tar -C pkg -czf "${{ matrix.asset }}.tar.gz" rbox
+          fi
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: rbox-${{ matrix.target }}
-          path: rbox-${{ matrix.target }}.tar.gz
+          name: ${{ matrix.asset }}
+          path: ${{ matrix.asset }}.${{ matrix.ext }}
 
   release:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
       - name: Download artifacts
         uses: actions/download-artifact@v4
         with:
           path: dist
           merge-multiple: true
 
+      - name: Checksums
+        run: |
+          cd dist
+          sha256sum *.tar.gz *.zip > checksums.txt
+
+      - name: Collect commit highlights
+        id: highlights
+        run: |
+          prev=$(git tag --sort=-v:refname | sed -n '2p')
+          range="${{ github.ref_name }}"
+          [ -n "$prev" ] && range="$prev..${{ github.ref_name }}"
+          {
+            echo 'body<<EOF'
+            echo
+            echo '### Highlights'
+            echo
+            git log --no-merges --pretty=format:'- %s (%h)' "$range" | head -30
+            echo
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
+
       - name: Create release
         uses: softprops/action-gh-release@v2
         with:
-          files: dist/*.tar.gz
+          files: |
+            dist/rbox-linux-x64.tar.gz
+            dist/rbox-linux-arm64.tar.gz
+            dist/rbox-macos-x64.tar.gz
+            dist/rbox-macos-arm64.tar.gz
+            dist/rbox-windows-x64.zip
+            dist/rbox-windows-arm64.zip
+            dist/checksums.txt
           generate_release_notes: true
+          body: |
+            rbox is a self-hosted file manager and web server in a single static binary: a Rust + Axum backend with SQLite, Argon2 auth, quotas, shares and archive tooling, and an embedded React + MUI web UI.
+
+            ## Install
+
+            ```sh
+            curl -fsSL https://raw.githubusercontent.com/FolderFile/rBox/main/install.sh | sh
+            ```
+
+            ## Downloads
+
+            | OS / Arch | File |
+            |---|---|
+            | Linux x64 (static, musl) | `rbox-linux-x64.tar.gz` |
+            | Linux ARM64 | `rbox-linux-arm64.tar.gz` |
+            | macOS Apple Silicon | `rbox-macos-arm64.tar.gz` |
+            | macOS Intel | `rbox-macos-x64.tar.gz` |
+            | Windows x64 | `rbox-windows-x64.zip` |
+            | Windows ARM64 | `rbox-windows-arm64.zip` |
+            | SHA-256 of every archive | `checksums.txt` |
+
+            ${{ steps.highlights.outputs.body }}

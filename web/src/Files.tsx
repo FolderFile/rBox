@@ -24,6 +24,9 @@ import ShareIcon from '@mui/icons-material/ShareRounded'
 import EditOutlined from '@mui/icons-material/EditRounded'
 import DriveFileMoveOutlined from '@mui/icons-material/DriveFileMoveRounded'
 import FileCopyOutlined from '@mui/icons-material/FileCopyRounded'
+import ContentCopyRounded from '@mui/icons-material/ContentCopyRounded'
+import ContentCutRounded from '@mui/icons-material/ContentCutRounded'
+import ContentPasteRounded from '@mui/icons-material/ContentPasteRounded'
 import DeleteOutline from '@mui/icons-material/DeleteOutline'
 import CreateNewFolderOutlined from '@mui/icons-material/CreateNewFolderRounded'
 import NoteAddOutlined from '@mui/icons-material/NoteAddRounded'
@@ -33,12 +36,13 @@ import FolderOpenOutlined from '@mui/icons-material/FolderOpenRounded'
 import { alpha } from '@mui/material/styles'
 import { api, Entry, fmtDate, fmtSize, isEditable, joinPath } from './api'
 import { useUploads } from './uploads'
-import { ConfirmDialog, PromptDialog, ShareDialog } from './dialogs'
+import { ConfirmDialog, DestinationPicker, PromptDialog, ShareDialog } from './dialogs'
 import { isMedia, Lightbox } from './Lightbox'
 import { FileBadge } from './fileicons'
 import { DEFAULT_FOLDERS, kindColor, kindOf } from './filetypes'
 import { ArchiveViewerDialog, CreateArchiveDialog, isArchiveName } from './ArchiveDialogs'
 import { InspectorDrawer } from './Inspector'
+import { PREFS } from './Settings'
 
 // the codemirror grammars are a third of the frontend; load them only when
 // a file is actually opened for editing
@@ -56,7 +60,7 @@ const HOVER_SX = {
 const tonalBtn = (fg: string) => ({
   width: 36,
   height: 36,
-  borderRadius: '10px',
+  borderRadius: '4px',
   bgcolor: alpha(fg, 0.14),
   color: fg,
   '&:hover': { bgcolor: alpha(fg, 0.24) },
@@ -75,7 +79,9 @@ function downloadFile(entry: Entry, dir: string) {
 
 export default function Files() {
   const params = useParams()['*'] ?? ''
-  const cwd = params.replace(/\/+$/, '')
+  // the URL is the single source of truth for where we are; both sidebar and
+  // breadcrumb clicks just navigate, and this component re-derives everything
+  const cwd = params.replace(/^\/+|\/+$/g, '')
   const [searchParams] = useSearchParams()
   const focus = searchParams.get('focus')
   const nav = useNavigate()
@@ -84,16 +90,21 @@ export default function Files() {
   const narrow = useMediaQuery(theme.breakpoints.down('sm'))
   const xs = useMediaQuery(theme.breakpoints.only('xs'))
 
-  const [entries, setEntries] = useState<Entry[]>([])
-  const [listDir, setListDir] = useState('')
+  const [listing, setListing] = useState<{ dir: string; entries: Entry[] }>({ dir: '', entries: [] })
+  const [loading, setLoading] = useState(false)
   const [selected, setSelected] = useState<Set<string>>(new Set())
-  const [view, setView] = useState<View>('table')
+  const [view, setView] = useState<View>(() => {
+    const saved = localStorage.getItem(PREFS.view)
+    return saved === 'list' || saved === 'grid' ? saved : 'table'
+  })
   const [sort, setSort] = useState<{ by: SortBy; dir: SortDir }>({ by: 'name', dir: 'asc' })
   const [sortAnchor, setSortAnchor] = useState<HTMLElement | null>(null)
   const [error, setError] = useState('')
   const [menu, setMenu] = useState<{ x: number; y: number; path: string; entry: Entry } | null>(null)
   const [dialog, setDialog] =
-    useState<{ kind: 'mkdir' | 'newfile' | 'rename' | 'move' | 'copy' | 'share' | 'archive' | 'archive-view' | 'delete'; entry: Entry } | null>(null)
+    useState<{ kind: 'mkdir' | 'newfile' | 'rename' | 'share' | 'archive' | 'archive-view' | 'delete'; entry: Entry } | null>(null)
+  const [picker, setPicker] = useState<{ action: 'move' | 'copy'; paths: string[] } | null>(null)
+  const [clip, setClip] = useState<{ mode: 'cut' | 'copy'; paths: string[] } | null>(null)
   const [editor, setEditor] = useState<Entry | null>(null)
   const [mediaIdx, setMediaIdx] = useState<number | null>(null)
   const [inspect, setInspect] = useState<Entry | null>(null)
@@ -105,36 +116,58 @@ export default function Files() {
   const [archiveTargets, setArchiveTargets] = useState<string[] | null>(null)
   const browseInput = useRef<HTMLInputElement>(null)
 
-  // a default folder the backend never got to create is made on the fly so
-  // the sidebar shortcuts always land somewhere real
+  // entries always travel with the directory they were fetched from. a new
+  // navigation keeps the previous list on screen (dimmed, with a progress
+  // bar) until the new one resolves, so the explorer can never flash "this
+  // folder is empty" for data it has not loaded yet. every request carries
+  // an AbortController and only an aborted controller may discard a result.
   const ensured = useRef<Set<string>>(new Set())
+  const listingSeq = useRef(0)
   const load = useCallback(
     async (silent = false) => {
+      const seq = ++listingSeq.current
+      const ctrl = new AbortController()
+      listingCtrl.current = ctrl
+      const target = cwd
+      const isStale = () => listingSeq.current !== seq || ctrl.signal.aborted
+      if (!silent) setLoading(true)
       try {
-        const res = await api.get(`/api/files?path=${encodeURIComponent(cwd)}`)
-        setEntries(res.entries)
-        setListDir(cwd)
+        const res = await api.get(`/api/files?path=${encodeURIComponent(target)}`, ctrl.signal)
+        if (isStale()) return
+        setListing({ dir: target, entries: res.entries })
         setSelected(new Set())
         if (!silent) setError('')
       } catch (err: any) {
+        if (isStale()) return
         if (
-          !ensured.current.has(cwd) &&
-          DEFAULT_FOLDERS.includes(cwd) &&
+          !ensured.current.has(target) &&
+          DEFAULT_FOLDERS.includes(target) &&
           /not found/i.test(err.message)
         ) {
-          ensured.current.add(cwd)
-          await api.post('/api/files/mkdir', { path: cwd }).catch(() => {})
+          ensured.current.add(target)
+          await api.post('/api/files/mkdir', { path: target }).catch(() => {})
           return load(silent)
         }
         setError(err.message)
+      } finally {
+        if (!isStale()) setLoading(false)
       }
     },
     [cwd],
   )
+  const listingCtrl = useRef<AbortController | null>(null)
 
   useEffect(() => {
     load()
+    return () => listingCtrl.current?.abort()
   }, [load])
+
+  useEffect(() => {
+    setSelected(new Set())
+  }, [cwd])
+
+  const listDir = listing.dir
+  const entries = listing.entries
 
   useEffect(() => {
     const onRefresh = () => load(true)
@@ -157,7 +190,7 @@ export default function Files() {
       else v = (a.is_dir ? 0 : a[sort.by]) - (b.is_dir ? 0 : b[sort.by])
       return sort.dir === 'asc' ? v : -v
     }
-    return entries.sort(by)
+    return [...entries].sort(by)
   }, [entries, sort])
 
   const mediaItems = useMemo(() => shown.filter(isMedia), [shown])
@@ -259,30 +292,71 @@ export default function Files() {
     setMenu(null)
   }
 
-  const moveCopyMulti = (kind: 'move' | 'copy') => {
-    const names = [...selected]
-    if (!names.length) return
-    if (names.length === 1) {
-      const entry = entries.find(e => e.name === names[0])
-      if (entry) setDialog({ kind, entry })
-      return
-    }
-    // multi-selection: one prompt drives a folder-to-folder pass over each
-    setDialog({ kind: kind === 'move' ? 'move' : 'copy', entry: { name: '', is_dir: false, size: 0, modified: 0 } })
-    multiBatch.current = { kind, names }
+  const openPicker = (action: 'move' | 'copy', paths: string[]) => {
+    if (!paths.length) return
+    setPicker({ action, paths })
+    setMenu(null)
   }
-  const multiBatch = useRef<{ kind: 'move' | 'copy'; names: string[] } | null>(null)
+  const moveCopyMulti = (action: 'move' | 'copy') =>
+    openPicker(action, [...selected].map(n => joinPath(listDir, n)))
 
-  const applyBatch = (dest: string) => {
-    const batch = multiBatch.current
-    if (!batch) return
+  const applyPicker = async (dest: string) => {
+    const p = picker
+    if (!p) return
     act(
-      () => Promise.all(batch.names.map(n =>
-        api.post(`/api/files/${batch.kind}`, { path: joinPath(listDir, n), dest_dir: dest }))),
-      `${batch.kind === 'move' ? 'Moved' : 'Copied'} ${batch.names.length} items`,
+      () => Promise.all(p.paths.map(path =>
+        api.post(`/api/files/${p.action}`, { path, dest_dir: dest }))),
+      `${p.action === 'move' ? 'Moved' : 'Copied'} ${p.paths.length} item${p.paths.length > 1 ? 's' : ''}`,
     )
-    multiBatch.current = null
+    setPicker(null)
   }
+
+  // in-app clipboard: cut/copy a selection, wander somewhere else, paste.
+  // cut empties after a successful paste; copy stays armed
+  const copySelection = (mode: 'cut' | 'copy', names: string[]) => {
+    if (!names.length) return
+    setClip({ mode, paths: names.map(n => joinPath(listDir, n)) })
+    setSnack(`${names.length} item${names.length > 1 ? 's' : ''} ready to ${mode === 'cut' ? 'move' : 'copy'}`)
+  }
+  const pasteClip = async () => {
+    if (!clip) return
+    const verb = clip.mode === 'cut' ? 'move' : 'copy'
+    try {
+      await Promise.all(clip.paths.map(path =>
+        api.post(`/api/files/${verb}`, { path, dest_dir: listDir })))
+      setSnack(
+        `${clip.mode === 'cut' ? 'Moved' : 'Copied'} ${clip.paths.length} item${clip.paths.length > 1 ? 's' : ''} into ${listDir || 'Home'}`,
+      )
+      if (clip.mode === 'cut') setClip(null)
+      load(true)
+    } catch (err: any) {
+      setSnack(err.message)
+    }
+  }
+
+  // ctrl+c / ctrl+x / ctrl+v over the listing; inputs and the code editor
+  // keep their native clipboard
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return
+      const el = document.activeElement as HTMLElement | null
+      if (el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA' || el.isContentEditable || el.closest('.cm-editor')))
+        return
+      const key = e.key.toLowerCase()
+      if (key === 'c' || key === 'x') {
+        if (!selected.size) return
+        e.preventDefault()
+        copySelection(key === 'x' ? 'cut' : 'copy', [...selected])
+      } else if (key === 'v' && clip) {
+        e.preventDefault()
+        pasteClip()
+      }
+    }
+    window.addEventListener('keydown', onKey)
+    return () => window.removeEventListener('keydown', onKey)
+    // clip/selected read through refs-of-state via the closure is fine here
+    // because the listener rebinds whenever either changes
+  }, [selected, clip, listDir])
 
   const checkbox = (e: Entry) => (
     <TableCell padding="checkbox" onClick={ev => ev.stopPropagation()}>
@@ -387,8 +461,10 @@ export default function Files() {
     { label: 'Share...', icon: <ShareIcon fontSize="small" />, onClick: () => { setMenu(null); setDialog({ kind: 'share', entry: e }) } },
     { label: 'Details', icon: <InfoRounded fontSize="small" />, onClick: () => { setMenu(null); setInspect(e) } },
     { label: 'Rename...', icon: <EditOutlined fontSize="small" />, onClick: () => { setMenu(null); setDialog({ kind: 'rename', entry: e }) } },
-    { label: 'Move...', icon: <DriveFileMoveOutlined fontSize="small" />, onClick: () => { setMenu(null); setDialog({ kind: 'move', entry: e }) } },
-    { label: 'Copy...', icon: <FileCopyOutlined fontSize="small" />, onClick: () => { setMenu(null); setDialog({ kind: 'copy', entry: e }) } },
+    { label: 'Move to...', icon: <DriveFileMoveOutlined fontSize="small" />, onClick: () => openPicker('move', [fullPath(e)]) },
+    { label: 'Copy to...', icon: <FileCopyOutlined fontSize="small" />, onClick: () => openPicker('copy', [fullPath(e)]) },
+    { label: 'Cut', icon: <ContentCutRounded fontSize="small" />, onClick: () => { setMenu(null); copySelection('cut', [e.name]) } },
+    { label: 'Copy', icon: <ContentCopyRounded fontSize="small" />, onClick: () => { setMenu(null); copySelection('copy', [e.name]) } },
     { label: 'Delete', icon: <DeleteOutline fontSize="small" />, onClick: () => { setMenu(null); confirmDelete([e.name]) } },
   ]
 
@@ -401,7 +477,29 @@ export default function Files() {
 
       {error && <Alert severity="error" sx={{ mb: 1 }}>{error}</Alert>}
 
-      <TableContainer component={Paper} variant="outlined" sx={{ width: '100%', overflowX: 'auto', borderRadius: 2 }}>
+      <Box sx={{ position: 'relative' }}>
+        {loading && (
+          <Box
+            sx={{
+              position: 'absolute', top: 0, left: 0, right: 0, zIndex: 2,
+              borderRadius: 1, overflow: 'hidden',
+            }}
+          >
+            <Box
+              sx={{
+                height: 2,
+                bgcolor: 'primary.main',
+                width: '40%',
+                animation: 'rbox-indeterminate 1.1s cubic-bezier(0.2, 0, 0, 1) infinite',
+                '@keyframes rbox-indeterminate': {
+                  '0%': { transform: 'translateX(-100%)' },
+                  '100%': { transform: 'translateX(250%)' },
+                },
+              }}
+            />
+          </Box>
+        )}
+      <TableContainer component={Paper} variant="outlined" sx={{ width: '100%', overflowX: 'auto', borderRadius: 1.5 }}>
         {view === 'table' ? (
           <Table size="small" stickyHeader>
             <TableHead>
@@ -525,7 +623,7 @@ export default function Files() {
             ))}
           </Box>
         )}
-        {shown.length === 0 && (
+        {shown.length === 0 && !loading && (
           <Box sx={{ p: 6, textAlign: 'center', color: 'text.secondary' }}>
             <FolderOpenOutlined />
             <Typography variant="body2" sx={{ mt: 1 }}>
@@ -533,7 +631,45 @@ export default function Files() {
             </Typography>
           </Box>
         )}
+        {shown.length === 0 && loading && (
+          <Box sx={{ p: 6, display: 'flex', justifyContent: 'center' }}>
+            <CircularProgress size={22} />
+          </Box>
+        )}
       </TableContainer>
+      </Box>
+
+      <Slide in={!!clip} direction="up" mountOnEnter unmountOnExit>
+        <Paper
+          elevation={8}
+          sx={{
+            position: 'fixed',
+            left: '50%',
+            transform: 'translateX(-50%)',
+            bottom: selected.size > 0 ? 76 : 20,
+            zIndex: t => t.zIndex.appBar,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 1,
+            px: 1.75,
+            py: 1,
+            borderRadius: 2,
+            bgcolor: theme.palette.mode === 'dark' ? '#1c2029' : undefined,
+            maxWidth: '95vw',
+          }}
+        >
+          <ContentPasteRounded fontSize="small" sx={{ color: clip?.mode === 'cut' ? 'warning.main' : 'info.main' }} />
+          <Typography variant="body2" noWrap>
+            {clip?.paths.length} item{(clip?.paths.length ?? 0) > 1 ? 's' : ''} ready to {clip?.mode === 'cut' ? 'move' : 'copy'}
+          </Typography>
+          <Button size="small" variant="contained" onClick={pasteClip}>
+            Paste into {listDir ? listDir.split('/').pop() : 'Home'}
+          </Button>
+          <Button size="small" onClick={() => setClip(null)}>
+            Cancel
+          </Button>
+        </Paper>
+      </Slide>
 
       <Slide in={selected.size > 0} direction="up" mountOnEnter unmountOnExit>
         <Paper
@@ -569,7 +705,8 @@ export default function Files() {
           </Button>
           <Button size="small" startIcon={<DriveFileMoveOutlined />} onClick={() => moveCopyMulti('move')}>Move</Button>
           <Button size="small" startIcon={<FileCopyOutlined />} onClick={() => moveCopyMulti('copy')}>Copy</Button>
-          <Button size="small" color="error" startIcon={<DeleteOutline />} onClick={() => confirmDelete([...selected])}>
+          <Button size="small" startIcon={<ContentCutRounded />} onClick={() => copySelection('cut', [...selected])}>Cut</Button>
+          <Button size="small" startIcon={<DeleteOutline />} color="error" onClick={() => confirmDelete([...selected])}>
             Delete
           </Button>
           <IconButton size="small" onClick={() => setSelected(new Set())}>
@@ -653,22 +790,17 @@ export default function Files() {
           confirmLabel="Rename"
         />
       )}
-      {(dialog?.kind === 'move' || dialog?.kind === 'copy') && (
-        <PromptDialog
-          title={dialog.kind === 'move' ? 'Move' : 'Copy'}
-          label={
-            multiBatch.current
-              ? `Destination folder for ${multiBatch.current.names.length} items`
-              : `Destination folder for "${dialog.entry.name}"`
-          }
-          initial={cwd}
+      {picker && (
+        <DestinationPicker
           open
-          onCancel={() => { multiBatch.current = null; setDialog(null) }}
-          onSubmit={dest => (multiBatch.current ? applyBatch(dest) : act(
-            () => api.post(`/api/files/${dialog!.kind}`, { path: dialogPath, dest_dir: dest }),
-            dialog!.kind === 'move' ? 'Moved' : 'Copied',
-          ))}
-          confirmLabel={dialog.kind === 'move' ? 'Move' : 'Copy'}
+          action={picker.action}
+          title={picker.action === 'move'
+            ? `Move ${picker.paths.length === 1 ? `"${picker.paths[0].split('/').pop()}"` : `${picker.paths.length} items`} to...`
+            : `Copy ${picker.paths.length === 1 ? `"${picker.paths[0].split('/').pop()}"` : `${picker.paths.length} items`} to...`}
+          forbiddenPrefixes={picker.action === 'move' ? picker.paths : []}
+          startDir={listDir}
+          onCancel={() => setPicker(null)}
+          onConfirm={applyPicker}
         />
       )}
       <ConfirmDialog
@@ -872,6 +1004,7 @@ export default function Files() {
         )}
         <Tooltip title="More">
           <IconButton
+            aria-label="More"
             size="small"
             onClick={ev => setMenu({ x: ev.clientX, y: ev.clientY, path: e.name, entry: e })}
           >

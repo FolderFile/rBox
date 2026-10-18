@@ -493,3 +493,177 @@ async fn landing_page_injects_opengraph_meta() {
     assert_eq!(status, StatusCode::OK);
     assert!(!String::from_utf8_lossy(&body).contains("og:title"));
 }
+
+#[tokio::test]
+async fn deleting_a_file_cascades_its_share() {
+    let ctx = setup("u1", 4096, false).await;
+    let (status, _, _) = upload(&ctx, "", &[("gone.txt", "ephemeral")]).await;
+    assert_eq!(status, StatusCode::OK);
+    let token = make_share(&ctx, "gone.txt", "").await;
+
+    let (status, _, _) = send_full(&ctx, public(&ctx, &format!("/s/{token}/info")).await).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, _, _) = send(
+        &ctx,
+        Request::builder()
+            .method("DELETE")
+            .uri("/api/files?path=gone.txt")
+            .header("cookie", &ctx.cookie)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    // the token no longer resolves and the row is gone entirely
+    let (status, _, _) = send_full(&ctx, public(&ctx, &format!("/s/{token}/info")).await).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    let conn = rusqlite::Connection::open(db::db_path(ctx.dir.path())).unwrap();
+    let n: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM shares WHERE token = ?1",
+            [&token],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(n, 0);
+}
+
+#[tokio::test]
+async fn deleting_a_folder_cascades_shares_inside_it() {
+    let ctx = setup("u1", 4096, false).await;
+    let (status, _, _) = send(
+        &ctx,
+        req(
+            &ctx,
+            "POST",
+            "/api/files/mkdir",
+            Body::from(r#"{"path":"stuff"}"#),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = upload(&ctx, "stuff", &[("inner.txt", "x")]).await;
+    assert_eq!(status, StatusCode::OK);
+    let inner = make_share(&ctx, "stuff/inner.txt", "").await;
+    let whole = make_share(&ctx, "stuff", "").await;
+
+    let (status, _, _) = send(
+        &ctx,
+        Request::builder()
+            .method("DELETE")
+            .uri("/api/files?path=stuff")
+            .header("cookie", &ctx.cookie)
+            .body(Body::empty())
+            .unwrap(),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+
+    let (status, body, _) = send(&ctx, get(&ctx, "/api/shares")).await;
+    assert_eq!(status, StatusCode::OK);
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["shares"].as_array().unwrap().len(), 0);
+    for t in [inner, whole] {
+        let (status, _, _) = send_full(&ctx, public(&ctx, &format!("/s/{t}/info")).await).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+}
+
+#[tokio::test]
+async fn renaming_and_moving_retargets_shares() {
+    let ctx = setup("u1", 4096, false).await;
+    let (status, _, _) = send(
+        &ctx,
+        req(
+            &ctx,
+            "POST",
+            "/api/files/mkdir",
+            Body::from(r#"{"path":"docs"}"#),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = upload(&ctx, "docs", &[("r.txt", "content-here")]).await;
+    assert_eq!(status, StatusCode::OK);
+    let token = make_share(&ctx, "docs/r.txt", "").await;
+
+    // rename inside the same folder
+    let (status, _, _) = send(
+        &ctx,
+        req(
+            &ctx,
+            "POST",
+            "/api/files/rename",
+            Body::from(r#"{"path":"docs/r.txt","new_name":"renamed.txt"}"#),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_status, body, _) = send(&ctx, get(&ctx, "/api/shares")).await;
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["shares"][0]["path"], "docs/renamed.txt");
+    let (status, body, _) = send(&ctx, public(&ctx, &format!("/s/{token}/download")).await).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, b"content-here");
+
+    // move to another folder; the same token still streams
+    let (status, _, _) = send(
+        &ctx,
+        req(
+            &ctx,
+            "POST",
+            "/api/files/mkdir",
+            Body::from(r#"{"path":"sink"}"#),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, _, _) = send(
+        &ctx,
+        req(
+            &ctx,
+            "POST",
+            "/api/files/move",
+            Body::from(r#"{"path":"docs/renamed.txt","dest_dir":"sink"}"#),
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (_status, body, _) = send(&ctx, get(&ctx, "/api/shares")).await;
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert_eq!(v["shares"][0]["path"], "sink/renamed.txt");
+    let (status, body, _) = send(&ctx, public(&ctx, &format!("/s/{token}/download")).await).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(body, b"content-here");
+}
+
+#[tokio::test]
+async fn externally_removed_files_are_pruned_from_share_listing() {
+    let ctx = setup("u1", 4096, false).await;
+    let (status, _, _) = upload(&ctx, "", &[("alive.txt", "ok"), ("ghost.txt", "boo")]).await;
+    assert_eq!(status, StatusCode::OK);
+    make_share(&ctx, "alive.txt", "").await;
+    let ghost = make_share(&ctx, "ghost.txt", "").await;
+
+    // remove the file behind the server's back, as `rm` on the host would
+    std::fs::remove_file(user_dir(&ctx).join("ghost.txt")).unwrap();
+
+    let (status, body, _) = send(&ctx, get(&ctx, "/api/shares")).await;
+    assert_eq!(status, StatusCode::OK);
+    let v: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    let shares = v["shares"].as_array().unwrap();
+    assert_eq!(shares.len(), 1);
+    assert_eq!(shares[0]["path"], "alive.txt");
+
+    let conn = rusqlite::Connection::open(db::db_path(ctx.dir.path())).unwrap();
+    let n: i64 = conn
+        .query_row(
+            "SELECT COUNT(*) FROM shares WHERE token = ?1",
+            [&ghost],
+            |r| r.get(0),
+        )
+        .unwrap();
+    assert_eq!(n, 0, "orphan share row must be pruned lazily");
+}

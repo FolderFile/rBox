@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useState } from 'react'
-import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
+import { BrowserRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { CssBaseline, ThemeProvider } from '@mui/material'
 import { dark, light } from './theme'
 import { AuthProvider, useAuth } from './auth'
@@ -9,7 +9,7 @@ import Shell from './Shell'
 import Files from './Files'
 import Shares from './Shares'
 import Users from './Users'
-import Account from './Account'
+import Settings from './Settings'
 import ShareLanding from './ShareLanding'
 
 function Theme({ children }: { children: React.ReactNode }) {
@@ -62,11 +62,16 @@ function WithUploads({ children }: { children: React.ReactNode }) {
 }
 
 function AppRoutes() {
-  const { user } = useAuth()
+  const { user, ready } = useAuth()
+  const location = useLocation()
+  // hold navigation until the session cookie has been checked: an eager
+  // redirect here would strand a deep link like /shares at the root
+  if (!ready) return null
+  const from = (location.state as { from?: string } | null)?.from ?? '/'
   return (
     <Routes>
       <Route path="/s/:token" element={<ShareLanding />} />
-      <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
+      <Route path="/login" element={user ? <Navigate to={from} replace /> : <Login />} />
       <Route
         path="/"
         element={user ? (
@@ -74,12 +79,13 @@ function AppRoutes() {
             <Shell />
           </WithUploads>
         ) : (
-          <Navigate to="/login" replace />
+          <Navigate to="/login" state={{ from: location.pathname + location.search }} replace />
         )}
       >
         <Route index element={<Files />} />
         <Route path="f/*" element={<Files />} />
-        <Route path="account" element={<Account />} />
+        <Route path="settings" element={<Settings />} />
+        <Route path="account" element={<Navigate to="/settings" replace />} />
         <Route path="shares" element={<Shares />} />
         <Route path="users" element={user?.is_admin ? <Users /> : <Navigate to="/" replace />} />
       </Route>

@@ -51,7 +51,7 @@ await page.click('button[type="submit"]')
 await page.waitForSelector('button[aria-label="Toggle sidebar"]', { timeout: 15000 })
 ok('login -> shell renders')
 
-for (const item of ['All Files', 'Images', 'Archives', 'Shared Links', 'Account & Sessions']) {
+for (const item of ['All Files', 'Images', 'Archives', 'Shared Links', 'Settings']) {
   const found = await page.locator(`text=${item}`).first().isVisible().catch(() => false)
   check(`drawer item "${item}"`, found)
 }
@@ -125,7 +125,7 @@ await page.waitForSelector('tr:has-text("notes.md")', { timeout: 10000 })
 // -- share modal: both links ------------------------------------------------
 // the row's last icon button is the more (⋮) menu; data-testid is stripped
 // in production builds so select by position
-await page.locator('tr:has-text("notes.md") button').nth(2).click()
+await page.locator('tr:has-text("notes.md") button[aria-label="More"]').click()
 await page.waitForSelector('text=Share...', { timeout: 5000 })
 await page.click('text=Share...')
 await page.waitForSelector('text=Create Share Link', { timeout: 5000 })
@@ -139,7 +139,7 @@ await page.click('button:has-text("Done")')
 ok('share modal with normal + raw links')
 
 // -- archive create + inspect + extract -------------------------------------
-await page.locator('tr:has-text("smoke-folder") button').nth(2).click()
+await page.locator('tr:has-text("smoke-folder") button[aria-label="More"]').click()
 await page.click('text=Archive...')
 await page.waitForSelector('text=Create Archive', { timeout: 5000 })
 await page.locator('div[role="dialog"] button:has-text("Create")').click()

@@ -76,23 +76,77 @@ pub async fn list(
     State(state): State<AppState>,
     auth: AuthUser,
 ) -> Result<Json<serde_json::Value>> {
+    let root = state.user_dir(auth.user.id);
     let conn = state.conn().await;
     let mut stmt = conn.prepare(
         "SELECT id, token, file_path, expires_at, password_hash IS NOT NULL
          FROM shares WHERE user_id = ?1 ORDER BY id DESC",
     )?;
-    let shares = stmt
+    let rows = stmt
         .query_map(params![auth.user.id], |r| {
-            Ok(serde_json::json!({
-                "id": r.get::<_, i64>(0)?,
-                "token": r.get::<_, String>(1)?,
-                "path": r.get::<_, String>(2)?,
-                "expires_at": r.get::<_, Option<i64>>(3)?,
-                "requires_password": r.get::<_, bool>(4)?,
-            }))
+            Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, String>(1)?,
+                r.get::<_, String>(2)?,
+                r.get::<_, Option<i64>>(3)?,
+                r.get::<_, bool>(4)?,
+            ))
         })?
         .collect::<rusqlite::Result<Vec<_>>>()?;
-    Ok(Json(serde_json::json!({ "shares": shares })))
+
+    // files deleted outside the app leave orphan rows; prune them here so
+    // the shared-links view only ever shows links that still resolve
+    let mut out = Vec::new();
+    let mut orphans = Vec::new();
+    for (id, token, path, expires_at, requires_password) in rows {
+        let alive = storage::sanitize(&root, &path)
+            .map(|p| p.exists())
+            .unwrap_or(false);
+        if alive {
+            out.push(serde_json::json!({
+                "id": id,
+                "token": token,
+                "path": path,
+                "expires_at": expires_at,
+                "requires_password": requires_password,
+            }));
+        } else {
+            orphans.push(token);
+        }
+    }
+    if !orphans.is_empty() {
+        for token in &orphans {
+            conn.execute(
+                "DELETE FROM shares WHERE token = ?1 AND user_id = ?2",
+                params![token, auth.user.id],
+            )?;
+        }
+    }
+    Ok(Json(serde_json::json!({ "shares": out })))
+}
+
+/// drop every share row pointing at `path` or anything underneath it; called
+/// when the target is deleted so dead links never linger in the ui
+pub fn remove_shares_under(conn: &Connection, user_id: i64, path: &str) -> rusqlite::Result<usize> {
+    conn.execute(
+        "DELETE FROM shares WHERE user_id = ?1 AND (file_path = ?2 OR file_path LIKE ?3 || '/%')",
+        params![user_id, path, path],
+    )
+}
+
+/// rewrite share rows whose target moved so links keep working across
+/// renames and moves, children of a moved directory included
+pub fn retarget_shares(
+    conn: &Connection,
+    user_id: i64,
+    old_path: &str,
+    new_path: &str,
+) -> rusqlite::Result<usize> {
+    conn.execute(
+        "UPDATE shares SET file_path = ?4 || substr(file_path, length(?3) + 1)
+         WHERE user_id = ?1 AND (file_path = ?2 OR file_path LIKE ?3 || '/%')",
+        params![user_id, old_path, old_path, new_path],
+    )
 }
 
 pub async fn revoke(

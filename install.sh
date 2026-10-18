@@ -10,24 +10,18 @@ REPO="FolderFile/rBox"
 
 case "$(uname -s)" in
   Linux) os=linux ;;
-  Darwin) os=darwin ;;
+  Darwin) os=macos ;;
   *) echo "error: unsupported OS $(uname -s)" >&2; exit 1 ;;
 esac
 
 case "$(uname -m)" in
-  x86_64|amd64)
-    if [ "$os" = darwin ]; then
-      echo "error: no release for Intel macs; use Rosetta or build from source" >&2
-      exit 1
-    fi
-    target=x86_64-unknown-linux-musl ;;
-  aarch64|arm64)
-    case "$os" in
-      darwin) target=aarch64-apple-darwin ;;
-      linux) target=aarch64-unknown-linux-gnu ;;
-    esac ;;
+  x86_64|amd64) arch=x64 ;;
+  aarch64|arm64) arch=arm64 ;;
   *) echo "error: unsupported architecture $(uname -m)" >&2; exit 1 ;;
 esac
+
+# clean asset names; every platform's archive contains just the rbox binary
+asset_name="rbox-$os-$arch.tar.gz"
 
 auth=""
 if [ -n "${GITHUB_TOKEN:-}" ]; then
@@ -47,14 +41,14 @@ fi
 # does not), so go through the API unconditionally
 meta=$(curl -fsSL ${auth:+-H "$auth"} "$rel")
 tag=$(printf '%s' "$meta" | sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -1)
-asset_id=$(printf '%s' "$meta" | awk -v a="rbox-$target.tar.gz" '
+asset_id=$(printf '%s' "$meta" | awk -v a="$asset_name" '
   /"id":/ { id = $0; gsub(/[^0-9]/, "", id) }
   $0 ~ "\"" a "\"" { print id; found = 1; exit }
   END { if (!found) exit 1 }') || {
-  echo "error: no rbox-$target.tar.gz asset found" >&2
+  echo "error: no $asset_name asset found" >&2
   exit 1
 }
-echo "downloading rbox ${tag:-unknown} ($target)"
+echo "downloading rbox ${tag:-unknown} ($asset_name)"
 
 tmp=$(mktemp -d)
 trap 'rm -rf "$tmp"' EXIT INT TERM

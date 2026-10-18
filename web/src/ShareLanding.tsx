@@ -149,7 +149,7 @@ export default function ShareLanding() {
               <Typography
                 component="pre"
                 sx={{
-                  fontFamily: '"Roboto Mono", "Consolas", monospace',
+                  fontFamily: '"JetBrains Mono", "Consolas", monospace',
                   fontSize: '0.8rem',
                   whiteSpace: 'pre-wrap',
                   wordBreak: 'break-word',

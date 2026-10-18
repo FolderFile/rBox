@@ -134,7 +134,7 @@ export function InspectorDrawer({
               <Typography
                 component="code"
                 sx={{
-                  fontFamily: '"Roboto Mono", monospace',
+                  fontFamily: '"JetBrains Mono", monospace',
                   fontSize: '0.7rem',
                   wordBreak: 'break-all',
                   bgcolor: 'action.hover',
@@ -167,7 +167,7 @@ export function InspectorDrawer({
                     target="_blank"
                     rel="noreferrer"
                     style={{
-                      fontFamily: '"Roboto Mono", monospace',
+                      fontFamily: '"JetBrains Mono", monospace',
                       fontSize: '0.75rem',
                       color: undefined,
                     }}

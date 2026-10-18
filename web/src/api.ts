@@ -6,12 +6,13 @@ export class ApiError extends Error {
   }
 }
 
-async function req(method: string, url: string, body?: unknown): Promise<any> {
+async function req(method: string, url: string, body?: unknown, signal?: AbortSignal): Promise<any> {
   const res = await fetch(url, {
     method,
     headers: body !== undefined ? { 'content-type': 'application/json' } : undefined,
     body: body !== undefined ? JSON.stringify(body) : undefined,
     credentials: 'same-origin',
+    signal,
   })
   const text = await res.text()
   const data = text ? JSON.parse(text) : {}
@@ -20,7 +21,7 @@ async function req(method: string, url: string, body?: unknown): Promise<any> {
 }
 
 export const api = {
-  get: (url: string) => req('GET', url),
+  get: (url: string, signal?: AbortSignal) => req('GET', url, undefined, signal),
   post: (url: string, body?: unknown) => req('POST', url, body),
   put: (url: string, body: unknown) => req('PUT', url, body),
   patch: (url: string, body: unknown) => req('PATCH', url, body),
@@ -76,14 +77,19 @@ export function fmtDate(ts: number): string {
 }
 
 const TEXT_EXTS = [
-  'txt', 'md', 'json', 'toml', 'yaml', 'yml', 'rs', 'js', 'ts', 'tsx', 'jsx',
-  'py', 'html', 'css', 'scss', 'sh', 'bash', 'go', 'c', 'h', 'cpp', 'sql',
-  'log', 'conf', 'ini', 'csv', 'xml',
+  'txt', 'md', 'mdx', 'json', 'jsonc', 'toml', 'yaml', 'yml', 'rs', 'js', 'ts', 'tsx', 'jsx',
+  'mjs', 'cjs', 'py', 'lua', 'go', 'c', 'h', 'cpp', 'hpp', 'cc', 'cs', 'java',
+  'kt', 'swift', 'rb', 'php', 'sh', 'bash', 'zsh', 'fish', 'ps1', 'bat', 'cmd',
+  'html', 'htm', 'css', 'scss', 'less', 'sql', 'log', 'conf', 'ini', 'cfg',
+  'env', 'dockerfile', 'gitignore', 'csv', 'xml', 'svg', 'nix', 'zig', 'vue',
+  'svelte', 'astro', 'r', 'pl', 'ex', 'exs', 'erl', 'hs', 'clj', 'scala',
+  'dart', 'gradle', 'diff',
 ]
+const TEXT_NAMES = new Set(['makefile', 'dockerfile', 'cargo.lock', 'cmakelists.txt'])
 
 export function isEditable(name: string): boolean {
   const ext = name.split('.').pop()?.toLowerCase() ?? ''
-  return TEXT_EXTS.includes(ext)
+  return TEXT_EXTS.includes(ext) || TEXT_NAMES.has(name.toLowerCase())
 }
 
 export function joinPath(...parts: string[]): string {

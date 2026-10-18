@@ -103,6 +103,13 @@ pub async fn rename(
         )));
     }
     tokio::fs::rename(&src, &dst).await?;
+    {
+        // existing shares follow the file to its new name so links don't break
+        let conn = state.conn().await;
+        let old_rel = storage::to_relative(&root, &src)?;
+        let new_rel = storage::to_relative(&root, &dst)?;
+        crate::shares::retarget_shares(&conn, auth.user.id, &old_rel, &new_rel)?;
+    }
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -137,6 +144,13 @@ pub async fn move_path(
         )));
     }
     tokio::fs::rename(&src, &dst).await?;
+    {
+        // shares resolve paths, not inodes: retarget them to the new location
+        let conn = state.conn().await;
+        let old_rel = storage::to_relative(&root, &src)?;
+        let new_rel = storage::to_relative(&root, &dst)?;
+        crate::shares::retarget_shares(&conn, auth.user.id, &old_rel, &new_rel)?;
+    }
     Ok(Json(serde_json::json!({ "ok": true })))
 }
 
@@ -213,12 +227,17 @@ pub async fn delete(
     if !tokio::fs::try_exists(&target).await? {
         return Err(AppError::NotFound(req.path));
     }
-    let bytes = tokio::task::spawn_blocking(move || storage::delete_path(&target))
+    let del = target.clone();
+    let bytes = tokio::task::spawn_blocking(move || storage::delete_path(&del))
         .await
         .map_err(|e| other(format!("join error: {e}")))??;
     {
         let mut conn = state.conn().await;
         users::adjust_used_bytes(&mut conn, auth.user.id, -(bytes as i64))?;
+        // dead links are worse than deleted ones: purge shares for the file
+        // and everything it contained
+        let rel = storage::to_relative(&root, &target)?;
+        crate::shares::remove_shares_under(&conn, auth.user.id, &rel)?;
     }
     Ok(Json(
         serde_json::json!({ "ok": true, "bytes_freed": bytes }),

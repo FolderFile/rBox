@@ -103,18 +103,30 @@ export function UploadProvider({
 export const useUploads = () => useContext(Ctx)
 
 function Tray({ jobs, onClear }: { jobs: Job[]; onClear: () => void }) {
-  if (jobs.length === 0) return null
   const pending = jobs.filter(j => !j.done).length
+  const failed = jobs.filter(j => j.error).length
+
+  // a fully successful pass fades itself out; failures stay pinned until
+  // the user acknowledges them
+  useEffect(() => {
+    if (pending > 0 || failed > 0 || jobs.length === 0) return
+    const t = setTimeout(onClear, 5000)
+    return () => clearTimeout(t)
+  }, [pending, failed, jobs.length, onClear])
+
+  if (jobs.length === 0) return null
   return (
     <Paper
       elevation={4}
       sx={{
+        // top-right keeps it clear of the multi-select and clipboard bars
+        // that live along the bottom edge
         position: 'fixed',
         right: 16,
-        bottom: 16,
+        top: 68,
         width: 320,
         p: 1,
-        zIndex: t => t.zIndex.snackbar,
+        zIndex: t => t.zIndex.appBar - 1,
         maxHeight: '60vh',
         overflow: 'auto',
       }}

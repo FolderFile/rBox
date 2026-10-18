@@ -12,6 +12,7 @@ import DescriptionOutlined from '@mui/icons-material/DescriptionOutlined'
 import CodeMirror from '@uiw/react-codemirror'
 import { EditorView, keymap } from '@codemirror/view'
 import { Prec, type Extension } from '@codemirror/state'
+import { StreamLanguage, syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language'
 import { oneDark } from '@codemirror/theme-one-dark'
 import { html } from '@codemirror/lang-html'
 import { css } from '@codemirror/lang-css'
@@ -22,35 +23,92 @@ import { rust } from '@codemirror/lang-rust'
 import { python } from '@codemirror/lang-python'
 import { sql } from '@codemirror/lang-sql'
 import { xml } from '@codemirror/lang-xml'
-import { yaml } from '@codemirror/lang-yaml'
+import { yaml as lezerYaml } from '@codemirror/lang-yaml'
+import { lua } from '@codemirror/legacy-modes/mode/lua'
+import { shell } from '@codemirror/legacy-modes/mode/shell'
+import { toml } from '@codemirror/legacy-modes/mode/toml'
+import { go } from '@codemirror/legacy-modes/mode/go'
+import { c, cpp, java, csharp, kotlin, scala } from '@codemirror/legacy-modes/mode/clike'
+import { swift } from '@codemirror/legacy-modes/mode/swift'
+import { ruby } from '@codemirror/legacy-modes/mode/ruby'
+import { dockerFile } from '@codemirror/legacy-modes/mode/dockerfile'
+import { diff } from '@codemirror/legacy-modes/mode/diff'
+import { properties } from '@codemirror/legacy-modes/mode/properties'
+import { r } from '@codemirror/legacy-modes/mode/r'
+import { perl } from '@codemirror/legacy-modes/mode/perl'
+import { haskell } from '@codemirror/legacy-modes/mode/haskell'
+import { erlang } from '@codemirror/legacy-modes/mode/erlang'
+import { groovy } from '@codemirror/legacy-modes/mode/groovy'
+import { powerShell } from '@codemirror/legacy-modes/mode/powershell'
 import { api } from './api'
 import { useThemeToggle } from './App'
 import { ConfirmDialog } from './dialogs'
+import { PREFS } from './Settings'
 
-const FONT_SIZES = [13, 16, 19]
+const FONT_SIZES = [12, 14, 16]
+const MONO = '"JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace'
+
+// every dev extension resolves to a real grammar. languages without a lezer
+// package ride CodeMirror 5's stream modes through StreamLanguage; dart has
+// no stream mode, so it borrows java's (near-identical token family)
+const legacy = (parser: any): Extension => StreamLanguage.define(parser) as unknown as Extension
 
 function langFor(name: string): { code: Extension[]; label: string; notepad?: boolean } {
-  const ext = name.split('.').pop()?.toLowerCase() ?? ''
+  const lower = name.toLowerCase()
+  const ext = lower.split('.').pop() ?? ''
   const plain = (label: string, notepad = false) => ({ code: [] as Extension[], label, notepad })
+
+  if (lower === 'makefile' || ext === 'mk') return { code: [legacy(shell)], label: 'Makefile' }
+  if (lower === 'dockerfile' || ext === 'dockerfile') return { code: [legacy(dockerFile)], label: 'Dockerfile' }
+  if (lower === 'cargo.lock' || lower === 'go.sum' || lower === 'go.mod') return { code: [legacy(toml)], label: 'Lockfile' }
+
   switch (ext) {
     case 'html': case 'htm': return { code: [html()], label: 'HTML' }
+    case 'vue': case 'svelte': case 'astro': return { code: [html()], label: ext.toUpperCase() }
     case 'xml': case 'svg': return { code: [xml()], label: 'XML' }
     case 'css': return { code: [css()], label: 'CSS' }
-    case 'scss': return { code: [css()], label: 'SCSS' }
+    case 'scss': case 'sass': case 'less': return { code: [css()], label: 'SCSS' }
     case 'js': case 'mjs': case 'cjs': return { code: [javascript()], label: 'JavaScript' }
     case 'jsx': return { code: [javascript({ jsx: true })], label: 'JSX' }
     case 'ts': return { code: [javascript({ typescript: true })], label: 'TypeScript' }
     case 'tsx': return { code: [javascript({ typescript: true, jsx: true })], label: 'TSX' }
-    case 'json': return { code: [json()], label: 'JSON' }
-    case 'md': return { code: [markdown()], label: 'Markdown' }
+    case 'json': case 'jsonc': return { code: [json()], label: 'JSON' }
+    case 'md': case 'mdx': return { code: [markdown()], label: 'Markdown' }
     case 'rs': return { code: [rust()], label: 'Rust' }
     case 'py': return { code: [python()], label: 'Python' }
     case 'sql': return { code: [sql()], label: 'SQL' }
-    case 'yaml': case 'yml': return { code: [yaml()], label: 'YAML' }
-    case 'toml': return plain('TOML')
-    case 'sh': case 'bash': return plain('Shell')
-    case 'txt': case 'log': return plain('Text', true)
-    default: return plain(ext ? ext.toUpperCase() : 'Text', true)
+    case 'yaml': case 'yml': return { code: [lezerYaml()], label: 'YAML' }
+    case 'toml': return { code: [legacy(toml)], label: 'TOML' }
+    case 'lua': return { code: [legacy(lua)], label: 'Lua' }
+    case 'sh': case 'bash': case 'zsh': case 'fish': return { code: [legacy(shell)], label: 'Shell' }
+    case 'ps1': return { code: [legacy(powerShell)], label: 'PowerShell' }
+    case 'go': return { code: [legacy(go)], label: 'Go' }
+    case 'c': case 'h': return { code: [legacy(c)], label: 'C' }
+    case 'cpp': case 'hpp': case 'cc': return { code: [legacy(cpp)], label: 'C++' }
+    case 'cs': return { code: [legacy(csharp)], label: 'C#' }
+    case 'java': return { code: [legacy(java)], label: 'Java' }
+    case 'kt': return { code: [legacy(kotlin)], label: 'Kotlin' }
+    case 'swift': return { code: [legacy(swift)], label: 'Swift' }
+    case 'scala': return { code: [legacy(scala)], label: 'Scala' }
+    case 'dart': return { code: [legacy(java)], label: 'Dart' }
+    case 'zig': return { code: [legacy(cpp)], label: 'Zig' }
+    case 'rb': return { code: [legacy(ruby)], label: 'Ruby' }
+    case 'ex': case 'exs': return { code: [legacy(erlang)], label: 'Elixir' }
+    case 'erl': return { code: [legacy(erlang)], label: 'Erlang' }
+    case 'dockerfile': return { code: [legacy(dockerFile)], label: 'Dockerfile' }
+    case 'diff': return { code: [legacy(diff)], label: 'Diff' }
+    case 'ini': case 'cfg': case 'conf': case 'properties': case 'gitignore': return { code: [legacy(properties)], label: 'Config' }
+    case 'env': return { code: [legacy(properties)], label: '.env' }
+    case 'r': return { code: [legacy(r)], label: 'R' }
+    case 'pl': return { code: [legacy(perl)], label: 'Perl' }
+    case 'hs': return { code: [legacy(haskell)], label: 'Haskell' }
+    case 'clj': return { code: [legacy(erlang)], label: 'Clojure' }
+    case 'gradle': return { code: [legacy(groovy)], label: 'Gradle' }
+    case 'nix': return plain('Nix')
+    case 'php': return { code: [legacy(cpp)], label: 'PHP' }
+    case 'bat': case 'cmd': return plain('Batch')
+    case 'txt': case 'log': case 'csv': case 'rtf': return plain('Text', true)
+    default: return plain(ext ? ext.toUpperCase() : 'Text')
   }
 }
 
@@ -70,11 +128,16 @@ export default function TextEditor({
   const [loading, setLoading] = useState(true)
   const [dirty, setDirty] = useState(false)
   const [error, setError] = useState('')
-  const [fontIdx, setFontIdx] = useState(0)
+  // editor defaults arrive from Settings (localStorage); the toolbar still
+  // lets a session override them without touching the stored preference
+  const prefFont = Number(localStorage.getItem(PREFS.fontSize) ?? 14)
+  const [fontIdx, setFontIdx] = useState(Math.max(0, FONT_SIZES.indexOf(prefFont)))
   const [confirmClose, setConfirmClose] = useState(false)
   const [notice, setNotice] = useState('')
   const lang = langFor(name)
-  const [wrap, setWrap] = useState(!!lang.notepad)
+  const prefWrap = (localStorage.getItem(PREFS.wrap) ?? 'on') === 'on'
+  const prefLineNums = (localStorage.getItem(PREFS.lineNumbers) ?? 'on') === 'on'
+  const [wrap, setWrap] = useState(lang.notepad ? true : prefWrap)
 
   useEffect(() => {
     api
@@ -125,7 +188,13 @@ export default function TextEditor({
   // the editor state on every keystroke
   const saveRef = useRef(save)
   saveRef.current = save
+  // line numbers show on plain text only when the setting says so; source
+  // files always keep them
+  const showLineNumbers = lang.notepad ? prefLineNums : true
   const extensions = [
+    // light mode has no theme-provided colors; fall back to the classic
+    // highlight style so tokens are colored even before oneDark takes over
+    syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
     Prec.high(
       keymap.of([
         {
@@ -144,8 +213,9 @@ export default function TextEditor({
       '.cm-editor': { height: '100%' },
       '.cm-scroller': {
         overflow: 'auto',
-        fontFamily: '"Roboto Mono", "Consolas", monospace',
+        fontFamily: MONO,
       },
+      '.cm-gutters': { fontFamily: MONO },
     }),
   ]
 
@@ -242,7 +312,7 @@ export default function TextEditor({
               basicSetup={{
                 highlightActiveLine: !lang.notepad,
                 foldGutter: !lang.notepad,
-                lineNumbers: !lang.notepad,
+                lineNumbers: showLineNumbers,
               }}
               onChange={v => {
                 setContent(v)
@@ -255,7 +325,7 @@ export default function TextEditor({
       <ConfirmDialog
         open={confirmClose}
         title="Unsaved changes"
-        message={`“${name}” has unsaved changes. Discard them and close?`}
+        message={`"${name}" has unsaved changes. Discard them and close?`}
         confirmLabel="Discard and close"
         onCancel={() => setConfirmClose(false)}
         onConfirm={() => {

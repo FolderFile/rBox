@@ -167,7 +167,7 @@ async function login(page) {
 
   // ---------- theme surfaces render ----------
   const bodyBg = await page.evaluate(() => getComputedStyle(document.body).backgroundColor)
-  check('dark canvas is obsidian #0a0c10', /rgb\(10, 12, 16\)/.test(bodyBg))
+  check('dark canvas is obsidian #050609', /rgb\(5, 6, 9\)/.test(bodyBg))
 
   // ---------- settings view ----------
   await page.locator('button[aria-label="Settings"]').first().click()

@@ -8,12 +8,12 @@ export const MOTION = `background-color 150ms ${EASE}, transform 150ms ${EASE}, 
 // surfaces the shell and explorers reach for directly
 export const SURFACE = {
   dark: {
-    canvas: '#0a0c10',
-    bar: '#11151d',
-    paper: '#141923',
-    tableHead: '#191f2c',
-    rowHover: '#1c2331',
-    border: '#1e2330',
+    canvas: '#050609',
+    bar: '#0a0d12',
+    paper: '#0d1015',
+    tableHead: '#10141c',
+    rowHover: '#131924',
+    border: '#181e29',
   },
   light: {
     canvas: '#f1f5f9',
@@ -26,8 +26,8 @@ export const SURFACE = {
 } as const
 
 const darkShadow = {
-  bar: '0 4px 20px rgba(0, 0, 0, 0.5)',
-  card: '0 8px 28px rgba(0, 0, 0, 0.4)',
+  bar: '0 4px 20px rgba(0, 0, 0, 0.55)',
+  card: '0 8px 28px rgba(0, 0, 0, 0.5)',
 }
 const lightShadow = {
   bar: '0 2px 12px rgba(15, 23, 42, 0.06)',
@@ -41,7 +41,10 @@ const base = {
     fontFamily: FONT,
     h6: { fontWeight: 700, letterSpacing: '-0.01em' },
     subtitle2: { fontWeight: 600 },
-    button: { textTransform: 'none' as const, fontWeight: 600 },
+    // 13px body text and buttons keep the whole product dense instead of
+    // airy-bloated; Inter stays legible at this size
+    body2: { fontSize: '0.8125rem' },
+    button: { textTransform: 'none' as const, fontWeight: 600, fontSize: '0.8125rem' },
   },
   shape: { borderRadius: 6 },
 }
@@ -53,6 +56,7 @@ function shared(shadow: { bar: string; card: string }): any {
       styleOverrides: {
         root: {
           borderRadius: 4,
+          padding: '5px 12px',
           transition: `background-color 150ms ${EASE}, transform 150ms ${EASE}, box-shadow 150ms ${EASE}`,
         },
       },
@@ -67,9 +71,24 @@ function shared(shadow: { bar: string; card: string }): any {
     },
     MuiTableCell: {
       styleOverrides: {
-        root: { transition: `background-color 150ms ${EASE}` },
+        root: { padding: '5px 12px', transition: `background-color 150ms ${EASE}` },
         head: { fontWeight: 600 },
       },
+    },
+    MuiChip: {
+      styleOverrides: { root: { height: 22, fontSize: '0.75rem' } },
+    },
+    MuiDialogTitle: {
+      styleOverrides: { root: { padding: '16px 20px 10px' } },
+    },
+    MuiDialogContent: {
+      styleOverrides: { root: { padding: '4px 20px 16px' } },
+    },
+    MuiDialogActions: {
+      styleOverrides: { root: { padding: '8px 20px 14px' } },
+    },
+    MuiCardContent: {
+      styleOverrides: { root: { padding: '12px 16px', '&:last-child': { paddingBottom: '12px' } } },
     },
     MuiCard: {
       defaultProps: { variant: 'outlined' as const },

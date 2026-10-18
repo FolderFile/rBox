@@ -226,8 +226,8 @@ export default function TextEditor({
           display: 'flex',
           alignItems: 'center',
           gap: 1,
-          px: 2,
-          minHeight: 52,
+          px: 1.5,
+          minHeight: 46,
           borderBottom: 1,
           borderColor: 'divider',
         }}

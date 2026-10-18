@@ -32,27 +32,27 @@ import { getEntryVisuals } from './fileicons'
 import { kindBg, kindColor } from './filetypes'
 import { SURFACE } from './theme'
 
-export const DRAWER_W = 240
+export const DRAWER_W = 220
 
 const SECTION_SX = {
   textTransform: 'uppercase',
-  fontSize: '0.70rem',
+  fontSize: '0.675rem',
   fontWeight: 700,
   letterSpacing: '0.08em',
   color: 'text.secondary',
-  pt: 1.75,
+  pt: 1.25,
   pb: 0.5,
-  px: 2.5,
+  px: 2,
 }
 
 // compact enough that every section plus the storage card fits a 768p laptop
 const ITEM_SX = {
   borderRadius: 1.5,
-  mx: 1.5,
+  mx: 1,
   my: 0.25,
-  py: 0.65,
-  px: 1.5,
-  minHeight: 36,
+  py: 0.4,
+  px: 1.25,
+  minHeight: 32,
 }
 
 export function Wordmark({ size = 28 }: { size?: number }) {
@@ -75,7 +75,14 @@ export function Wordmark({ size = 28 }: { size?: number }) {
           color: 'text.primary',
         }}
       >
-        r<Box component="span" sx={{ color: 'primary.main' }}>B</Box>ox
+        r
+        <Box
+          component="span"
+          sx={{ color: t => (t.palette.mode === 'dark' ? '#ffffff' : t.palette.text.primary) }}
+        >
+          B
+        </Box>
+        ox
       </Typography>
     </Box>
   )
@@ -86,7 +93,7 @@ function NavBadge({ icon, color, bg }: { icon: React.ReactNode; color: string; b
     <Box
       sx={{
         display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
-        width: 30, height: 30, borderRadius: 1, bgcolor: bg, color, flexShrink: 0,
+        width: 26, height: 26, borderRadius: 1, bgcolor: bg, color, flexShrink: 0,
       }}
     >
       {icon}
@@ -111,7 +118,7 @@ function QuotaCard() {
     }
   }
   return (
-    <Box sx={{ p: 1.5, m: 1.5, mt: 1, borderRadius: 1.5, bgcolor: 'action.hover', flexShrink: 0 }}>
+    <Box sx={{ p: 1.25, m: 1.25, mt: 1, borderRadius: 1.5, bgcolor: 'action.hover', flexShrink: 0 }}>
       <Box sx={{ display: 'flex', alignItems: 'center', mb: 0.75 }}>
         <Typography variant="body2" fontWeight={600} sx={{ flex: 1 }}>Storage</Typography>
         <Chip
@@ -132,7 +139,7 @@ function QuotaCard() {
         variant="determinate"
         value={pct}
         color={pct > 95 ? 'error' : pct > 80 ? 'warning' : 'primary'}
-        sx={{ height: 6, borderRadius: 3 }}
+        sx={{ height: 5, borderRadius: 2.5 }}
       />
       <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block', mt: 0.5 }}>
         {fmtSize(user.used_bytes)} of {fmtSize(user.quota_bytes)}
@@ -185,8 +192,8 @@ function SidebarBody({ onPick }: { onPick: () => void }) {
       <NavBadge icon={<SidebarIcon iconKey={it.iconKey} color={it.color} />} color={it.color} bg={it.bg} />
       <ListItemText
         primary={it.label}
-        slotProps={{ primary: { fontWeight: isAt(it.to) ? 600 : 400, fontSize: '0.875rem' } }}
-        sx={{ ml: 1.5 }}
+        slotProps={{ primary: { fontWeight: isAt(it.to) ? 600 : 400, fontSize: '0.8125rem' } }}
+        sx={{ ml: 1.25 }}
       />
     </ListItemButton>
   )
@@ -196,9 +203,9 @@ function SidebarBody({ onPick }: { onPick: () => void }) {
       width: DRAWER_W, display: 'flex', flexDirection: 'column', height: '100%',
       overflowX: 'hidden',
     }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 2.5, py: 1.75, flexShrink: 0 }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 2, py: 1.5, flexShrink: 0 }}>
         <Wordmark />
-        <Chip label="v0.3" size="small" sx={{ borderRadius: 1, height: 18, fontSize: '0.65rem' }} />
+        <Chip label="v0.4" size="small" sx={{ borderRadius: 1, height: 18, fontSize: '0.65rem' }} />
       </Box>
       <Divider sx={{ opacity: 0.7 }} />
       <List sx={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', py: 0, whiteSpace: 'nowrap' }}>
@@ -342,7 +349,7 @@ export default function Shell() {
             overflowX: 'hidden',
           }}
         >
-          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, px: 1, minHeight: 56, maxWidth: '100%', overflowX: 'hidden' }}>
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, px: 1, minHeight: 48, maxWidth: '100%', overflowX: 'hidden' }}>
             <Tooltip title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}>
               <IconButton
                 aria-label="Toggle sidebar"
@@ -357,8 +364,8 @@ export default function Shell() {
               onClick={() => setPaletteOpen(true)}
               sx={{
                 display: 'flex', alignItems: 'center', gap: 1, flex: 1,
-                maxWidth: 480, cursor: 'text', borderRadius: 1,
-                px: 1.5, py: 0.75, mx: { xs: 0, sm: 1 },
+                maxWidth: 420, cursor: 'text', borderRadius: 1,
+                px: 1.5, py: 0.5, mx: { xs: 0, sm: 1 },
                 bgcolor: 'action.hover',
                 transition: 'background-color 150ms cubic-bezier(0.2, 0, 0, 1)',
                 '&:hover': { bgcolor: 'action.selected' },
@@ -413,7 +420,7 @@ export default function Shell() {
           </Box>
         </Box>
 
-        <Box sx={{ p: { xs: 1.5, sm: 2 }, flexGrow: 1, maxWidth: '100%', boxSizing: 'border-box' }}>
+        <Box sx={{ p: { xs: 1.25, sm: 1.5 }, flexGrow: 1, maxWidth: '100%', boxSizing: 'border-box' }}>
           <Outlet />
         </Box>
       </Box>

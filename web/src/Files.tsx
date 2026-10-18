@@ -58,8 +58,8 @@ const HOVER_SX = {
 
 // tonal toolbar buttons echo the soft badges used on the file rows
 const tonalBtn = (fg: string) => ({
-  width: 36,
-  height: 36,
+  width: 32,
+  height: 32,
   borderRadius: '4px',
   bgcolor: alpha(fg, 0.14),
   color: fg,
@@ -387,7 +387,7 @@ export default function Files() {
     setView(VIEW_ORDER[(VIEW_ORDER.indexOf(view) + 1) % VIEW_ORDER.length])
 
   const toolbarRows = (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, mb: 1.5, flexWrap: 'wrap' }}>
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1.25, flexWrap: 'wrap' }}>
       <Breadcrumbs sx={{ flex: 1, minWidth: 120 }} itemsAfterCollapse={3}>
         <Link
           underline="hover"
@@ -415,9 +415,9 @@ export default function Files() {
           <Button
             aria-label="Upload files"
             onClick={() => setUploadOpen(true)}
-            sx={{ ...tonalBtn(kindColor.video), width: { xs: 36, md: 'auto' }, px: { md: 1.25 }, gap: 0.75, flexShrink: 0 }}
+            sx={{ ...tonalBtn(kindColor.video), width: { xs: 32, md: 'auto' }, px: { md: 1.25 }, gap: 0.75, flexShrink: 0 }}
           >
-            <UploadIcon sx={{ fontSize: 19 }} />
+            <UploadIcon sx={{ fontSize: 17 }} />
             <Box component="span" sx={{ display: { xs: 'none', md: 'inline' }, fontSize: '0.8rem', fontWeight: 600 }}>
               Upload
             </Box>
@@ -425,24 +425,24 @@ export default function Files() {
         </Tooltip>
         <Tooltip title="New folder">
           <IconButton aria-label="New folder" onClick={() => openCreate('mkdir')} sx={tonalBtn('#f59e0b')}>
-            <CreateNewFolderOutlined sx={{ fontSize: 19 }} />
+            <CreateNewFolderOutlined sx={{ fontSize: 17 }} />
           </IconButton>
         </Tooltip>
         <Tooltip title="New file">
           <IconButton aria-label="New file" onClick={() => openCreate('newfile')} sx={tonalBtn(kindColor.code)}>
-            <NoteAddOutlined sx={{ fontSize: 19 }} />
+            <NoteAddOutlined sx={{ fontSize: 17 }} />
           </IconButton>
         </Tooltip>
         <Tooltip title={`Sort: ${sortLabel} (${sort.dir === 'asc' ? 'ascending' : 'descending'})`}>
           <IconButton aria-label="Sort" onClick={e => setSortAnchor(e.currentTarget)} sx={tonalBtn(kindColor.doc)}>
-            <SortIcon sx={{ fontSize: 19 }} />
+            <SortIcon sx={{ fontSize: 17 }} />
           </IconButton>
         </Tooltip>
         <Tooltip title={`View: ${viewName}. Click to switch.`}>
           <IconButton aria-label="Switch view" onClick={cycleView} sx={tonalBtn(kindColor.other)}>
-            {view === 'table' ? <TableRowsRounded sx={{ fontSize: 19 }} />
-              : view === 'list' ? <ViewListRounded sx={{ fontSize: 19 }} />
-              : <GridViewRounded sx={{ fontSize: 19 }} />}
+            {view === 'table' ? <TableRowsRounded sx={{ fontSize: 17 }} />
+              : view === 'list' ? <ViewListRounded sx={{ fontSize: 17 }} />
+              : <GridViewRounded sx={{ fontSize: 17 }} />}
           </IconButton>
         </Tooltip>
       </Box>

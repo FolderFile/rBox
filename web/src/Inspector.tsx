@@ -80,7 +80,7 @@ export function InspectorDrawer({
       open={open}
       anchor="right"
       onClose={onClose}
-      slotProps={{ paper: { sx: { width: { xs: '100%', sm: DRAWER_W }, px: 2, py: 2 } } }}
+      slotProps={{ paper: { sx: { width: { xs: '100%', sm: DRAWER_W }, px: 1.5, py: 1.5 } } }}
     >
       <Stack direction="row" alignItems="center" spacing={1} sx={{ mb: 1 }}>
         <Box sx={{ flex: 1 }}>

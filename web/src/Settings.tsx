@@ -44,11 +44,11 @@ function Section({
   children: React.ReactNode
 }) {
   return (
-    <Card sx={{ mb: 3 }}>
+    <Card sx={{ mb: 2 }}>
       <CardContent>
-        <Stack direction="row" spacing={1.5} alignItems="flex-start" sx={{ mb: 2 }}>
+        <Stack direction="row" spacing={1.5} alignItems="flex-start" sx={{ mb: 1.5 }}>
           <Box sx={{
-            display: 'inline-flex', p: 1, borderRadius: 1, mt: 0.25,
+            display: 'inline-flex', p: 0.75, borderRadius: 1, mt: 0.25,
             bgcolor: 'rgba(244, 63, 94, 0.12)', color: 'primary.main',
           }}>
             {icon}
@@ -233,8 +233,8 @@ export default function Settings() {
   const othersCount = sessions.filter(s => !s.current).length
 
   return (
-    <Box sx={{ maxWidth: 880 }}>
-      <Typography variant="h6" sx={{ mb: 2 }}>Settings</Typography>
+    <Box sx={{ maxWidth: 760 }}>
+      <Typography variant="h6" sx={{ mb: 1.5 }}>Settings</Typography>
 
       <Section
         icon={<StorageRounded fontSize="small" />}
@@ -273,7 +273,7 @@ export default function Settings() {
       </Section>
 
       <Section icon={<TuneRounded fontSize="small" />} title="Preferences &amp; Appearance" subtitle="Saved on this device, applied immediately.">
-        <Stack spacing={2.5}>
+        <Stack spacing={2}>
           <SegControl
             label="Theme"
             value={mode}

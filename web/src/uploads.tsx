@@ -123,7 +123,7 @@ function Tray({ jobs, onClear }: { jobs: Job[]; onClear: () => void }) {
         // that live along the bottom edge
         position: 'fixed',
         right: 16,
-        top: 68,
+        top: 56,
         width: 320,
         p: 1,
         zIndex: t => t.zIndex.appBar - 1,

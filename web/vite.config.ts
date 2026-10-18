@@ -12,35 +12,9 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     sourcemap: false,
-    rollupOptions: {
-      output: {
-        // vendor chunks change rarely, so app updates stay a small download
-        manualChunks: {
-          react: ['react', 'react-dom', 'react-router-dom'],
-          mui: ['@mui/material', '@mui/icons-material', '@emotion/react', '@emotion/styled'],
-          // syntax grammars are only pulled in by the lazy Editor import
-          codemirror: [
-            '@uiw/react-codemirror',
-            '@codemirror/view',
-            '@codemirror/state',
-            '@codemirror/language',
-            '@codemirror/commands',
-            '@codemirror/autocomplete',
-            '@codemirror/search',
-            '@codemirror/lang-html',
-            '@codemirror/lang-css',
-            '@codemirror/lang-javascript',
-            '@codemirror/lang-json',
-            '@codemirror/lang-markdown',
-            '@codemirror/lang-rust',
-            '@codemirror/lang-python',
-            '@codemirror/lang-sql',
-            '@codemirror/lang-xml',
-            '@codemirror/lang-yaml',
-            '@codemirror/theme-one-dark',
-          ],
-        },
-      },
-    },
+    // no manual chunk splitting: forcing react/mui/codemirror into static
+    // chunks once caused load-order crashes in stale tabs. the Editor is
+    // split naturally by its dynamic import().
+    chunkSizeWarningLimit: 900,
   },
 })

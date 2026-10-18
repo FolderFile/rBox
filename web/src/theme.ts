@@ -31,25 +31,24 @@ const transitions = {
     },
   },
   MuiCard: {
-    defaultProps: { variant: 'outlined' },
+    defaultProps: { variant: 'outlined' as const },
     styleOverrides: {
       root: { transition: `transform 150ms ${EASE}, box-shadow 150ms ${EASE}, border-color 150ms ${EASE}` },
     },
   },
-  MuiTextField: { defaultProps: { size: 'small', variant: 'outlined' } },
+  MuiTextField: { defaultProps: { size: 'small' as const, variant: 'outlined' as const } },
   MuiDialog: {
-    defaultProps: { fullWidth: true, maxWidth: 'sm' },
+    defaultProps: { fullWidth: true, maxWidth: 'sm' as const },
     styleOverrides: { paper: { borderRadius: 10 } },
   },
   MuiPaper: { defaultProps: { elevation: 0 } },
-  MuiTable: { defaultProps: { size: 'small' } },
+  MuiTable: { defaultProps: { size: 'small' as const } },
   MuiButtonBase: {
     styleOverrides: { root: { borderRadius: 8 } },
   },
 }
 
 export const light = createTheme({
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   ...base,
   palette: {
     mode: 'light',
@@ -61,8 +60,8 @@ export const light = createTheme({
   },
   components: {
     ...transitions,
-    MuiTextField: { defaultProps: { size: 'small', variant: 'outlined' } },
-  } as any,
+    MuiTextField: { defaultProps: { size: 'small' as const, variant: 'outlined' as const } },
+  },
 })
 
 export const dark = createTheme({
@@ -77,7 +76,7 @@ export const dark = createTheme({
   },
   components: {
     ...transitions,
-    MuiTextField: { defaultProps: { size: 'small', variant: 'outlined' } },
+    MuiTextField: { defaultProps: { size: 'small' as const, variant: 'outlined' as const } },
     MuiPaper: {
       defaultProps: { elevation: 0 },
       styleOverrides: {
@@ -99,5 +98,5 @@ export const dark = createTheme({
         },
       },
     },
-  } as any,
+  },
 })

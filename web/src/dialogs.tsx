@@ -1,5 +1,5 @@
 import { useRef, useState } from 'react'
-import { Button, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, IconButton, InputAdornment, MenuItem, Stack, TextField, Typography } from '@mui/material'
+import { Box, Button, Dialog, DialogActions, DialogContent, DialogContentText, DialogTitle, IconButton, InputAdornment, MenuItem, Stack, TextField, Typography } from '@mui/material'
 import CheckIcon from '@mui/icons-material/Check'
 import ContentCopy from '@mui/icons-material/ContentCopy'
 import OpenInNew from '@mui/icons-material/OpenInNew'
@@ -180,6 +180,8 @@ export function ShareDialog(props: {
       <DialogActions>
         {url ? (
           <>
+            <Button onClick={props.onCancel}>Done</Button>
+            <Box sx={{ flex: 1 }} />
             <Button onClick={() => window.open(url, '_blank')} startIcon={<OpenInNew />}>
               Open Link
             </Button>

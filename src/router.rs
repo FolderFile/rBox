@@ -78,6 +78,33 @@ mod tests {
     use super::*;
 
     #[tokio::test]
+    async fn missing_assets_never_serve_html_fallback() {
+        let dir = tempfile::tempdir().unwrap();
+        let conn = crate::db::open(dir.path()).unwrap();
+        crate::db::init_schema(&conn).unwrap();
+        let app = build(crate::state::AppState::new(dir.path()).unwrap());
+        use tower::ServiceExt;
+        for uri in ["/assets/retired-chunk-abc123.js", "/old.css", "/logo.svg"] {
+            let res = app
+                .clone()
+                .oneshot(
+                    axum::http::Request::builder()
+                        .uri(uri)
+                        .body(axum::body::Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            let ct = res.headers()["content-type"].to_str().unwrap();
+            assert_eq!(res.status(), axum::http::StatusCode::NOT_FOUND, "{uri}");
+            assert!(
+                !ct.starts_with("text/html"),
+                "{uri} must not fall back to HTML"
+            );
+        }
+    }
+
+    #[tokio::test]
     async fn spa_fallback_serves_index() {
         let dir = tempfile::tempdir().unwrap();
         let conn = crate::db::open(dir.path()).unwrap();

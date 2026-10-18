@@ -3,6 +3,7 @@ import { BrowserRouter, Navigate, Route, Routes } from 'react-router-dom'
 import { CssBaseline, ThemeProvider } from '@mui/material'
 import { dark, light } from './theme'
 import { AuthProvider, useAuth } from './auth'
+import { UploadProvider } from './uploads'
 import Login from './Login'
 import Shell from './Shell'
 import Files from './Files'
@@ -44,6 +45,22 @@ interface ThemeToggle {
 const ThemeToggleCtx = React.createContext<ThemeToggle>(null as any)
 export const useThemeToggle = () => React.useContext(ThemeToggleCtx)
 
+// the upload context must wrap the Shell itself: Shell renders the pending
+// badge in the app bar, which lives outside the main content outlet
+function WithUploads({ children }: { children: React.ReactNode }) {
+  const { refresh } = useAuth()
+  return (
+    <UploadProvider
+      onDone={() => {
+        refresh()
+        window.dispatchEvent(new Event('rbox:refresh'))
+      }}
+    >
+      {children}
+    </UploadProvider>
+  )
+}
+
 function AppRoutes() {
   const { user } = useAuth()
   return (
@@ -52,7 +69,13 @@ function AppRoutes() {
       <Route path="/login" element={user ? <Navigate to="/" replace /> : <Login />} />
       <Route
         path="/"
-        element={user ? <Shell /> : <Navigate to="/login" replace />}
+        element={user ? (
+          <WithUploads>
+            <Shell />
+          </WithUploads>
+        ) : (
+          <Navigate to="/login" replace />
+        )}
       >
         <Route index element={<Files />} />
         <Route path="f/*" element={<Files />} />

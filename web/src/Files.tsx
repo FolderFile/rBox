@@ -7,12 +7,11 @@ import {
   MenuItem, Paper, Slide, Snackbar, Table, TableBody, TableCell, TableContainer,
   TableHead, TableRow, Tooltip, Typography, useMediaQuery, useTheme,
 } from '@mui/material'
-import Add from '@mui/icons-material/Add'
 import UploadIcon from '@mui/icons-material/CloudUploadRounded'
 import CloudUploadOutlined from '@mui/icons-material/CloudUploadOutlined'
-import GridViewOutlined from '@mui/icons-material/GridViewRounded'
-import ViewListOutlined from '@mui/icons-material/ViewListRounded'
-import TableChartRounded from '@mui/icons-material/TableChartRounded'
+import GridViewRounded from '@mui/icons-material/GridViewRounded'
+import ViewListRounded from '@mui/icons-material/ViewListRounded'
+import TableRowsRounded from '@mui/icons-material/TableRowsRounded'
 import HomeRounded from '@mui/icons-material/HomeRounded'
 import SortIcon from '@mui/icons-material/SortRounded'
 import Close from '@mui/icons-material/CloseRounded'
@@ -30,14 +29,14 @@ import CreateNewFolderOutlined from '@mui/icons-material/CreateNewFolderRounded'
 import NoteAddOutlined from '@mui/icons-material/NoteAddRounded'
 import InfoRounded from '@mui/icons-material/InfoRounded'
 import FolderZipRounded from '@mui/icons-material/FolderZipRounded'
-import SearchOff from '@mui/icons-material/SearchOffRounded'
 import FolderOpenOutlined from '@mui/icons-material/FolderOpenRounded'
-import { api, Entry, fmtDate, fmtSize, isEditable, joinPath, SearchHit } from './api'
+import { alpha } from '@mui/material/styles'
+import { api, Entry, fmtDate, fmtSize, isEditable, joinPath } from './api'
 import { useUploads } from './uploads'
 import { ConfirmDialog, PromptDialog, ShareDialog } from './dialogs'
 import { isMedia, Lightbox } from './Lightbox'
 import { FileBadge } from './fileicons'
-import { kindOf } from './filetypes'
+import { DEFAULT_FOLDERS, kindColor, kindOf } from './filetypes'
 import { ArchiveViewerDialog, CreateArchiveDialog, isArchiveName } from './ArchiveDialogs'
 import { InspectorDrawer } from './Inspector'
 
@@ -53,14 +52,18 @@ const HOVER_SX = {
   transition: 'background-color 150ms cubic-bezier(0.2, 0, 0, 1), transform 150ms cubic-bezier(0.2, 0, 0, 1), box-shadow 150ms cubic-bezier(0.2, 0, 0, 1)',
 }
 
-const CATEGORIES: Record<string, string> = {
-  image: 'Images',
-  video: 'Videos',
-  audio: 'Audio',
-  doc: 'Documents',
-  code: 'Code',
-  archive: 'Archives',
-}
+// tonal toolbar buttons echo the soft badges used on the file rows
+const tonalBtn = (fg: string) => ({
+  width: 36,
+  height: 36,
+  borderRadius: '10px',
+  bgcolor: alpha(fg, 0.14),
+  color: fg,
+  '&:hover': { bgcolor: alpha(fg, 0.24) },
+  transition: 'background-color 200ms cubic-bezier(0.2, 0, 0, 1), color 200ms cubic-bezier(0.2, 0, 0, 1)',
+})
+
+const VIEW_ORDER: View[] = ['table', 'list', 'grid']
 
 function downloadFile(entry: Entry, dir: string) {
   const url = `/api/files/${entry.is_dir ? 'zip' : 'download'}?path=${encodeURIComponent(joinPath(dir, entry.name))}`
@@ -71,10 +74,8 @@ function downloadFile(entry: Entry, dir: string) {
 }
 
 export default function Files() {
-  const { cat } = useParams()
-  const category = cat && CATEGORIES[cat] ? cat : null
   const params = useParams()['*'] ?? ''
-  const cwd = category ? '' : params.replace(/\/+$/, '')
+  const cwd = params.replace(/\/+$/, '')
   const [searchParams] = useSearchParams()
   const focus = searchParams.get('focus')
   const nav = useNavigate()
@@ -87,10 +88,8 @@ export default function Files() {
   const [listDir, setListDir] = useState('')
   const [selected, setSelected] = useState<Set<string>>(new Set())
   const [view, setView] = useState<View>('table')
-  const [filter, setFilter] = useState('')
   const [sort, setSort] = useState<{ by: SortBy; dir: SortDir }>({ by: 'name', dir: 'asc' })
   const [sortAnchor, setSortAnchor] = useState<HTMLElement | null>(null)
-  const [createAnchor, setCreateAnchor] = useState<HTMLElement | null>(null)
   const [error, setError] = useState('')
   const [menu, setMenu] = useState<{ x: number; y: number; path: string; entry: Entry } | null>(null)
   const [dialog, setDialog] =
@@ -106,34 +105,31 @@ export default function Files() {
   const [archiveTargets, setArchiveTargets] = useState<string[] | null>(null)
   const browseInput = useRef<HTMLInputElement>(null)
 
+  // a default folder the backend never got to create is made on the fly so
+  // the sidebar shortcuts always land somewhere real
+  const ensured = useRef<Set<string>>(new Set())
   const load = useCallback(
     async (silent = false) => {
       try {
-        if (category) {
-          const res = await api.get(`/api/files/search?q=&type=${category}`)
-          const hits: SearchHit[] = res.results
-          const seen = new Set<string>()
-          const list: Entry[] = hits.map(h => ({
-            name: h.path.split('/').pop() ?? h.name,
-            is_dir: h.is_dir,
-            size: h.size,
-            modified: h.modified,
-          })).filter(e => !e.is_dir && !seen.has(e.name) && seen.add(e.name))
-          setEntries(list)
-          setListDir('')
-          setSelected(new Set())
-        } else {
-          const res = await api.get(`/api/files?path=${encodeURIComponent(cwd)}`)
-          setEntries(res.entries)
-          setListDir(cwd)
-          setSelected(new Set())
-        }
+        const res = await api.get(`/api/files?path=${encodeURIComponent(cwd)}`)
+        setEntries(res.entries)
+        setListDir(cwd)
+        setSelected(new Set())
         if (!silent) setError('')
       } catch (err: any) {
+        if (
+          !ensured.current.has(cwd) &&
+          DEFAULT_FOLDERS.includes(cwd) &&
+          /not found/i.test(err.message)
+        ) {
+          ensured.current.add(cwd)
+          await api.post('/api/files/mkdir', { path: cwd }).catch(() => {})
+          return load(silent)
+        }
         setError(err.message)
       }
     },
-    [cwd, category],
+    [cwd],
   )
 
   useEffect(() => {
@@ -142,13 +138,8 @@ export default function Files() {
 
   useEffect(() => {
     const onRefresh = () => load(true)
-    const onFilter = (e: Event) => setFilter((e as CustomEvent).detail ?? '')
     window.addEventListener('rbox:refresh', onRefresh)
-    window.addEventListener('rbox:filter', onFilter)
-    return () => {
-      window.removeEventListener('rbox:refresh', onRefresh)
-      window.removeEventListener('rbox:filter', onFilter)
-    }
+    return () => window.removeEventListener('rbox:refresh', onRefresh)
   }, [load])
 
   // open the inspector for a file jumped to from the command palette
@@ -166,10 +157,8 @@ export default function Files() {
       else v = (a.is_dir ? 0 : a[sort.by]) - (b.is_dir ? 0 : b[sort.by])
       return sort.dir === 'asc' ? v : -v
     }
-    return entries
-      .filter(e => e.name.toLowerCase().includes(filter.toLowerCase()))
-      .sort(by)
-  }, [entries, filter, sort])
+    return entries.sort(by)
+  }, [entries, sort])
 
   const mediaItems = useMemo(() => shown.filter(isMedia), [shown])
 
@@ -232,10 +221,6 @@ export default function Files() {
   }
 
   const fullPath = (e: Entry) => joinPath(listDir, e.name)
-  // in category mode entries carry no directory context, so row actions route
-  // through the inspector instead
-  const rowPath = category ? null : fullPath
-  const rowDisabled = !!category
 
   const delNames = useRef<string[] | null>(null)
   const confirmDelete = (names: string[]) => {
@@ -321,92 +306,74 @@ export default function Files() {
   ]
   const sortLabel = sortItems.find(it => it.value === sort.by)!.label
   const openCreate = (kind: 'mkdir' | 'newfile') => {
-    setCreateAnchor(null)
     setDialog({ kind, entry: { name: '', is_dir: kind === 'mkdir', size: 0, modified: 0 } })
   }
+  const viewName = view === 'table' ? 'Table' : view === 'list' ? 'Compact list' : 'Grid'
+  const cycleView = () =>
+    setView(VIEW_ORDER[(VIEW_ORDER.indexOf(view) + 1) % VIEW_ORDER.length])
 
-  const toolbarRows = category ? (
-    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1, flexWrap: 'wrap' }}>
-      <Typography variant="h6" sx={{ flex: 1 }}>{CATEGORIES[category]}</Typography>
-      <Button
-        size="small"
-        startIcon={<SortIcon />}
-        onClick={e => setSortAnchor(e.currentTarget)}
-        sx={{ textTransform: 'none' }}
-      >
-        Sort: {sortLabel}
-      </Button>
-      {viewToggle()}
-    </Box>
-  ) : (
-    <>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 0.5 }}>
-        <Typography variant="h6" sx={{ flex: 1 }}>My Files</Typography>
-        <Button variant="contained" startIcon={<UploadIcon />} onClick={() => setUploadOpen(true)}>
-          Upload
-        </Button>
-        <Button startIcon={<Add />} onClick={e => setCreateAnchor(e.currentTarget)}>
-          Create
-        </Button>
-      </Box>
-      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, mb: 1, flexWrap: 'wrap' }}>
-        <Breadcrumbs sx={{ flex: 1, minWidth: 120 }} itemsAfterCollapse={3}>
-          <Link
-            underline="hover"
-            sx={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
-            onClick={() => go('')}
-          >
-            <HomeRounded fontSize="small" />
-          </Link>
-          {cwd
-            .split('/')
-            .filter(Boolean)
-            .map((part, i, parts) => (
-              <Link
-                key={i}
-                underline="hover"
-                sx={{ cursor: 'pointer' }}
-                onClick={() => go(parts.slice(0, i + 1).join('/'))}
-              >
-                {part}
-              </Link>
-            ))}
-        </Breadcrumbs>
-        <Button
-          size="small"
-          startIcon={<SortIcon />}
-          onClick={e => setSortAnchor(e.currentTarget)}
-          sx={{ textTransform: 'none' }}
+  const toolbarRows = (
+    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, mb: 1.5, flexWrap: 'wrap' }}>
+      <Breadcrumbs sx={{ flex: 1, minWidth: 120 }} itemsAfterCollapse={3}>
+        <Link
+          underline="hover"
+          sx={{ cursor: 'pointer', display: 'inline-flex', alignItems: 'center' }}
+          onClick={() => go('')}
         >
-          Sort: {sortLabel}
-        </Button>
-        {viewToggle()}
+          <HomeRounded fontSize="small" />
+        </Link>
+        {cwd
+          .split('/')
+          .filter(Boolean)
+          .map((part, i, parts) => (
+            <Link
+              key={i}
+              underline="hover"
+              sx={{ cursor: 'pointer' }}
+              onClick={() => go(parts.slice(0, i + 1).join('/'))}
+            >
+              {part}
+            </Link>
+          ))}
+      </Breadcrumbs>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.75 }}>
+        <Tooltip title="Upload files">
+          <Button
+            aria-label="Upload files"
+            onClick={() => setUploadOpen(true)}
+            sx={{ ...tonalBtn(kindColor.video), width: { xs: 36, md: 'auto' }, px: { md: 1.25 }, gap: 0.75, flexShrink: 0 }}
+          >
+            <UploadIcon sx={{ fontSize: 19 }} />
+            <Box component="span" sx={{ display: { xs: 'none', md: 'inline' }, fontSize: '0.8rem', fontWeight: 600 }}>
+              Upload
+            </Box>
+          </Button>
+        </Tooltip>
+        <Tooltip title="New folder">
+          <IconButton aria-label="New folder" onClick={() => openCreate('mkdir')} sx={tonalBtn('#f59e0b')}>
+            <CreateNewFolderOutlined sx={{ fontSize: 19 }} />
+          </IconButton>
+        </Tooltip>
+        <Tooltip title="New file">
+          <IconButton aria-label="New file" onClick={() => openCreate('newfile')} sx={tonalBtn(kindColor.code)}>
+            <NoteAddOutlined sx={{ fontSize: 19 }} />
+          </IconButton>
+        </Tooltip>
+        <Tooltip title={`Sort: ${sortLabel} (${sort.dir === 'asc' ? 'ascending' : 'descending'})`}>
+          <IconButton aria-label="Sort" onClick={e => setSortAnchor(e.currentTarget)} sx={tonalBtn(kindColor.doc)}>
+            <SortIcon sx={{ fontSize: 19 }} />
+          </IconButton>
+        </Tooltip>
+        <Tooltip title={`View: ${viewName}. Click to switch.`}>
+          <IconButton aria-label="Switch view" onClick={cycleView} sx={tonalBtn(kindColor.other)}>
+            {view === 'table' ? <TableRowsRounded sx={{ fontSize: 19 }} />
+              : view === 'list' ? <ViewListRounded sx={{ fontSize: 19 }} />
+              : <GridViewRounded sx={{ fontSize: 19 }} />}
+          </IconButton>
+        </Tooltip>
       </Box>
-    </>
+    </Box>
   )
-
-  function viewToggle() {
-    return (
-      <Box sx={{ display: 'flex', borderRadius: 2, border: '1px solid', borderColor: 'divider', p: 0.25, gap: 0.25 }}>
-        {(['table', 'list', 'grid'] as View[]).map(v => {
-          const icon = v === 'table' ? <TableChartRounded sx={{ fontSize: 17 }} />
-            : v === 'list' ? <ViewListOutlined sx={{ fontSize: 17 }} />
-            : <GridViewOutlined sx={{ fontSize: 17 }} />
-          return (
-            <Tooltip key={v} title={v === 'table' ? 'Comfortable table' : v === 'list' ? 'Compact list' : 'Visual grid'}>
-              <IconButton
-                size="small"
-                onClick={() => setView(v)}
-                sx={{ borderRadius: 1.5, bgcolor: view === v ? 'action.selected' : 'transparent' }}
-              >
-                {icon}
-              </IconButton>
-            </Tooltip>
-          )
-        })}
-      </Box>
-    )
-  }
 
   const rowMenuItems = (e: Entry) => [
     ...(isArchiveName(e.name)
@@ -415,7 +382,7 @@ export default function Files() {
           { label: 'Extract to Folder...', icon: <DriveFileMoveOutlined fontSize="small" />, onClick: () => { setMenu(null); setDialog({ kind: 'archive-view', entry: e }) } },
         ]
       : []),
-    { label: 'Archive...', icon: <FolderZipRounded fontSize="small" />, onClick: () => openArchiveCreate([rowPath?.(e) ?? e.name]) },
+    { label: 'Archive...', icon: <FolderZipRounded fontSize="small" />, onClick: () => openArchiveCreate([fullPath(e)]) },
     { label: e.is_dir ? 'Download (.zip)' : 'Download', icon: <DownloadIcon fontSize="small" />, onClick: () => { downloadFile(e, listDir); setMenu(null) } },
     { label: 'Share...', icon: <ShareIcon fontSize="small" />, onClick: () => { setMenu(null); setDialog({ kind: 'share', entry: e }) } },
     { label: 'Details', icon: <InfoRounded fontSize="small" />, onClick: () => { setMenu(null); setInspect(e) } },
@@ -426,7 +393,7 @@ export default function Files() {
   ]
 
   const archiveEntry = dialog?.kind === 'archive-view' ? dialog.entry : null
-  const dialogPath = dialog ? rowPath?.(dialog.entry) ?? dialog.entry.name : ''
+  const dialogPath = dialog ? fullPath(dialog.entry) : ''
 
   return (
     <Box>
@@ -468,8 +435,17 @@ export default function Files() {
                   </TableCell>
                   {!narrow && <TableCell align="right">{e.is_dir ? '' : fmtSize(e.size)}</TableCell>}
                   {!narrow && <TableCell>{fmtDate(e.modified)}</TableCell>}
-                  <TableCell onClick={ev => ev.stopPropagation()} padding={narrow ? 'none' : 'normal'} sx={{ whiteSpace: 'nowrap' }}>
-                    <RowActions e={e} onInspect={() => setInspect(e)} />
+                  <TableCell
+                    onClick={ev => ev.stopPropagation()}
+                    padding={narrow ? 'none' : 'normal'}
+                    sx={{
+                      whiteSpace: 'nowrap',
+                      // quick icons stay out of sight until the row is aimed at
+                      '& .quick': { opacity: 0, transition: 'opacity 150ms cubic-bezier(0.2, 0, 0, 1)' },
+                      'tr:hover & .quick, & .quick:focus-visible': { opacity: 1 },
+                    }}
+                  >
+                    <RowActions e={e} onInspect={() => setInspect(e)} reveal />
                   </TableCell>
                 </TableRow>
               ))}
@@ -551,21 +527,10 @@ export default function Files() {
         )}
         {shown.length === 0 && (
           <Box sx={{ p: 6, textAlign: 'center', color: 'text.secondary' }}>
-            {filter || category ? (
-              <>
-                <SearchOff />
-                <Typography variant="body2" sx={{ mt: 1 }}>
-                  {category ? `No ${CATEGORIES[category].toLowerCase()} in your vault yet.` : `Nothing matches "${filter}".`}
-                </Typography>
-              </>
-            ) : (
-              <>
-                <FolderOpenOutlined />
-                <Typography variant="body2" sx={{ mt: 1 }}>
-                  This folder is empty. Drop files here to upload.
-                </Typography>
-              </>
-            )}
+            <FolderOpenOutlined />
+            <Typography variant="body2" sx={{ mt: 1 }}>
+              This folder is empty. Drop files here to upload.
+            </Typography>
           </Box>
         )}
       </TableContainer>
@@ -620,15 +585,6 @@ export default function Files() {
             {it.label}
           </MenuItem>
         ))}
-      </Menu>
-
-      <Menu open={!!createAnchor} anchorEl={createAnchor} onClose={() => setCreateAnchor(null)}>
-        <MenuItem onClick={() => openCreate('mkdir')} sx={{ gap: 1, display: 'flex', alignItems: 'center' }}>
-          <CreateNewFolderOutlined fontSize="small" /> New Folder
-        </MenuItem>
-        <MenuItem onClick={() => openCreate('newfile')} sx={{ gap: 1, display: 'flex', alignItems: 'center' }}>
-          <NoteAddOutlined fontSize="small" /> New File
-        </MenuItem>
       </Menu>
 
       <Menu open={!!sortAnchor} anchorEl={sortAnchor} onClose={() => setSortAnchor(null)}>
@@ -873,11 +829,11 @@ export default function Files() {
 
       <InspectorDrawer
         entry={inspect}
-        path={inspect ? (category ? inspect.name : fullPath(inspect)) : ''}
+        path={inspect ? fullPath(inspect) : ''}
         open={!!inspect}
         onClose={() => { setInspect(null); if (focus) nav(location.pathname, { replace: true }) }}
         onShare={e => { setInspect(null); setDialog({ kind: 'share', entry: e }) }}
-        onDownload={e => { downloadFile(e, category ? '' : listDir); setInspect(null) }}
+        onDownload={e => { downloadFile(e, listDir); setInspect(null) }}
       />
 
       <Snackbar
@@ -889,26 +845,27 @@ export default function Files() {
     </Box>
   )
 
-  function RowActions({ e, onInspect, compact }: { e: Entry; onInspect: () => void; compact?: boolean }) {
+  function RowActions({ e, onInspect, compact, reveal }: { e: Entry; onInspect: () => void; compact?: boolean; reveal?: boolean }) {
+    const quick = reveal ? 'quick' : undefined
     return (
       <Box sx={{ display: 'flex', justifyContent: 'flex-end', alignItems: 'center' }}>
         {!xs && !compact && (
           <Tooltip title="Details">
-            <IconButton size="small" onClick={onInspect}>
+            <IconButton className={quick} size="small" sx={{ color: 'text.secondary' }} onClick={onInspect}>
               <InfoRounded fontSize="small" />
             </IconButton>
           </Tooltip>
         )}
         {!xs && (
           <Tooltip title="Download">
-            <IconButton size="small" component="a" href={rowDisabled ? undefined : `/api/files/${e.is_dir ? 'zip' : 'download'}?path=${encodeURIComponent(joinPath(listDir, e.name))}`} download>
+            <IconButton className={quick} size="small" sx={{ color: 'text.secondary' }} component="a" href={`/api/files/${e.is_dir ? 'zip' : 'download'}?path=${encodeURIComponent(joinPath(listDir, e.name))}`} download>
               <DownloadIcon fontSize="small" />
             </IconButton>
           </Tooltip>
         )}
         {!xs && !compact && (
           <Tooltip title="Share">
-            <IconButton size="small" onClick={() => setDialog({ kind: 'share', entry: e })}>
+            <IconButton className={quick} size="small" sx={{ color: 'text.secondary' }} onClick={() => setDialog({ kind: 'share', entry: e })}>
               <ShareIcon fontSize="small" />
             </IconButton>
           </Tooltip>

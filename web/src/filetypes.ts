@@ -44,3 +44,6 @@ export const kindBg: Record<FileKind, string> = {
   doc: 'rgba(100, 116, 139, 0.14)',
   other: 'rgba(148, 163, 184, 0.12)',
 }
+
+// real folders backing the sidebar shortcuts and the command palette
+export const DEFAULT_FOLDERS = ['Images', 'Videos', 'Audio', 'Documents', 'Code', 'Archives']

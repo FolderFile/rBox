@@ -70,6 +70,7 @@ pub async fn create_user(
         req.is_admin,
     )?;
     tokio::fs::create_dir_all(state.user_dir(id)).await?;
+    crate::storage::ensure_default_folders(&state.user_dir(id));
     Ok((
         axum::http::StatusCode::CREATED,
         Json(serde_json::json!({ "ok": true, "id": id })),

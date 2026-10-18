@@ -1,6 +1,17 @@
 use crate::error::{bad, other, Result};
 use std::path::{Component, Path, PathBuf};
 
+/// real folders backing the sidebar shortcuts; every user root gets them so
+/// navigation never lands on a 404
+pub const DEFAULT_FOLDERS: &[&str] =
+    &["Images", "Videos", "Audio", "Documents", "Code", "Archives"];
+
+pub fn ensure_default_folders(root: &Path) {
+    for name in DEFAULT_FOLDERS {
+        let _ = std::fs::create_dir_all(root.join(name));
+    }
+}
+
 #[allow(dead_code)] // consumed by the http handlers next step
 /// Resolve a user-supplied relative path under `root`. Absolute paths, `..`,
 /// and null bytes are rejected; the result is always inside `root`. Empty

@@ -35,6 +35,13 @@ pub struct AppState(pub Arc<Inner>);
 impl AppState {
     pub fn new(data_dir: impl AsRef<Path>) -> rusqlite::Result<Self> {
         let conn = rusqlite::Connection::open(db::db_path(data_dir.as_ref()))?;
+        // startup ensure: users created before folder shortcuts existed still
+        // need their default folders before the first request resolves one
+        if let Ok(list) = crate::users::list(&conn) {
+            for u in &list {
+                crate::storage::ensure_default_folders(&db::user_dir(data_dir.as_ref(), u.id));
+            }
+        }
         Ok(Self(Arc::new(Inner {
             db: Mutex::new(conn),
             data_dir: data_dir.as_ref().to_path_buf(),

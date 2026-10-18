@@ -13,7 +13,7 @@ const pop = keyframes`
   to { opacity: 1; transform: translateY(0) scale(1); }
 `
 
-// Ctrl+K palette: recursive vault search plus category shortcuts; hitting a
+// Ctrl+K palette: recursive vault search plus folder shortcuts; hitting a
 // result navigates straight to its folder with the file preselected
 export function CommandPalette({
   open,
@@ -61,14 +61,7 @@ export function CommandPalette({
     onOpenPath(hit.path, hit.is_dir)
   }
 
-  const categories: { label: string; q: string }[] = [
-    { label: 'All images', q: 'image' },
-    { label: 'All videos', q: 'video' },
-    { label: 'All audio', q: 'audio' },
-    { label: 'All documents', q: 'doc' },
-    { label: 'All code', q: 'code' },
-    { label: 'All archives', q: 'archive' },
-  ]
+  const folders = ['Images', 'Videos', 'Audio', 'Documents', 'Code', 'Archives']
 
   const onKey = (e: React.KeyboardEvent) => {
     if (!hits?.length) return
@@ -138,17 +131,20 @@ export function CommandPalette({
           {hits === null && (
             <Box sx={{ p: 1 }}>
               <Typography variant="caption" color="text.secondary" sx={{ px: 2, display: 'block', py: 1 }}>
-                Quick filters
+                Folders
               </Typography>
-              {categories.map(c => (
+              {folders.map(f => (
                 <ListItemButton
-                  key={c.q}
+                  key={f}
                   onClick={() => {
                     onClose()
-                    onOpenPath(`cat:${c.q}`, false)
+                    onOpenPath(f, true)
                   }}
                 >
-                  <ListItemText primary={c.label} />
+                  <ListItemIcon sx={{ minWidth: 36 }}>
+                    <FolderRounded />
+                  </ListItemIcon>
+                  <ListItemText primary={f} />
                 </ListItemButton>
               ))}
               <Typography variant="caption" color="text.secondary" sx={{ px: 2, display: 'block', pt: 1 }}>

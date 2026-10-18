@@ -48,7 +48,7 @@ await page.goto(BASE + '/', { waitUntil: 'networkidle' })
 await page.fill('input[type="text"], input:not([type])', USER).catch(() => {})
 await page.fill('input[type="password"]', PASS)
 await page.click('button[type="submit"]')
-await page.waitForSelector('text=My Files', { timeout: 15000 })
+await page.waitForSelector('button[aria-label="Toggle sidebar"]', { timeout: 15000 })
 ok('login -> shell renders')
 
 for (const item of ['All Files', 'Images', 'Archives', 'Shared Links', 'Account & Sessions']) {
@@ -64,21 +64,27 @@ await phone.goto(BASE + '/', { waitUntil: 'networkidle' })
 await phone.fill('input[type="text"], input:not([type])', USER).catch(() => {})
 await phone.fill('input[type="password"]', PASS)
 await phone.click('button[type="submit"]')
-await phone.waitForSelector('text=My Files', { timeout: 15000 })
-const hamburger = await phone.locator('button:has(svg)').first().isVisible().catch(() => false)
+await phone.waitForSelector('button[aria-label="Toggle sidebar"]', { timeout: 15000 })
+const hamburger = await phone.locator('button[aria-label="Toggle sidebar"]').first().isVisible().catch(() => false)
 check('mobile hamburger button', hamburger)
+// drawer items hidden on phone until the drawer opens
+check('mobile: no persistent drawer column', !(await phone.locator('nav').first().isVisible()))
+await phone.click('button[aria-label="Toggle sidebar"]')
+await phone.waitForSelector('.MuiDrawer-root >> text=All Files', { timeout: 5000 })
+check('mobile: drawer opens with sections', true)
+await phone.keyboard.press('Escape')
+await phone.close()
 await phone.close()
 
 // -- create folder, upload, browse, edit -----------------------------------
-await page.click('text=Create')
-await page.click('text=New Folder')
+await page.click('button[aria-label="New folder"]')
 await page.fill('div[role="dialog"] input', 'smoke-folder')
 await page.keyboard.press('Enter')
 await page.waitForSelector('text=smoke-folder', { timeout: 10000 })
 ok('create folder -> appears in listing')
 
 // upload a real file through the modal's file input
-await page.click('button:has-text("Upload")')
+await page.click('button[aria-label="Upload files"]')
 await page.waitForSelector('text=Drag & drop files here')
 const [fileChooser] = await Promise.all([
   page.waitForEvent('filechooser'),

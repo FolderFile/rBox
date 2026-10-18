@@ -79,7 +79,6 @@ function AppRoutes() {
       >
         <Route index element={<Files />} />
         <Route path="f/*" element={<Files />} />
-        <Route path="c/:cat" element={<Files />} />
         <Route path="account" element={<Account />} />
         <Route path="shares" element={<Shares />} />
         <Route path="users" element={user?.is_admin ? <Users /> : <Navigate to="/" replace />} />

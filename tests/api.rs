@@ -86,7 +86,12 @@ async fn listing_sorts_dirs_first_and_rejects_traversal() {
         .iter()
         .map(|e| e["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, vec!["zdir", "afile.txt"]);
+    // default folders are seeded at startup and sort ahead of files
+    assert_eq!(
+        names[..6],
+        ["Archives", "Audio", "Code", "Documents", "Images", "Videos"]
+    );
+    assert_eq!(names[6..], ["zdir", "afile.txt"]);
 
     for bad in [
         "/api/files?path=..",

@@ -40,7 +40,9 @@ pub fn run_init(
     db::init_schema(&conn)?;
     let admin_id = users::create(&conn, &username, &password, quota, true)?;
 
-    std::fs::create_dir_all(db::user_dir(data_dir, admin_id))?;
+    let root = db::user_dir(data_dir, admin_id);
+    std::fs::create_dir_all(&root)?;
+    storage::ensure_default_folders(&root);
 
     println!("Initialized rbox in {}", data_dir.display());
     println!(
@@ -66,7 +68,9 @@ pub fn run_user_add(
     };
     let conn = db::open(data_dir)?;
     let id = users::create(&conn, username, &password, quota, false)?;
-    std::fs::create_dir_all(db::user_dir(data_dir, id))?;
+    let root = db::user_dir(data_dir, id);
+    std::fs::create_dir_all(&root)?;
+    storage::ensure_default_folders(&root);
     println!("Added user '{username}' (quota {})", format_size(quota));
     Ok(())
 }

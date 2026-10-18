@@ -1,10 +1,10 @@
 import { useEffect, useState } from 'react'
 import {
   Badge, Box, Chip, Divider, Drawer, IconButton, List,
-  ListItemButton, ListItemIcon, ListItemText, LinearProgress, Menu, MenuItem,
+  ListItemButton, ListItemText, LinearProgress, Menu, MenuItem,
   Tooltip, Typography, useMediaQuery, useTheme,
 } from '@mui/material'
-import DescriptionRounded from '@mui/icons-material/DescriptionRounded'
+import FolderRounded from '@mui/icons-material/FolderRounded'
 import ImageIcon from '@mui/icons-material/ImageRounded'
 import MovieRounded from '@mui/icons-material/MovieRounded'
 import AudiotrackRounded from '@mui/icons-material/AudiotrackRounded'
@@ -29,8 +29,48 @@ import { useUploads } from './uploads'
 import { useAuth } from './auth'
 import { useThemeToggle } from './App'
 import { CommandPalette } from './CommandPalette'
+import { kindBg, kindColor } from './filetypes'
 
-const DRAWER_W = 260
+const DRAWER_W = 240
+
+const SECTION_SX = {
+  textTransform: 'uppercase',
+  fontSize: '0.70rem',
+  fontWeight: 700,
+  letterSpacing: '0.08em',
+  color: 'text.secondary',
+  pt: 2.5,
+  pb: 0.75,
+  px: 2.5,
+}
+
+const ITEM_SX = {
+  borderRadius: 2,
+  mx: 1.5,
+  my: 0.5,
+}
+
+function NavBadge({
+  icon, color, bg,
+}: { icon: React.ReactNode; color: string; bg: string }) {
+  return (
+    <Box
+      sx={{
+        display: 'inline-flex',
+        alignItems: 'center',
+        justifyContent: 'center',
+        width: 32,
+        height: 32,
+        borderRadius: '30%',
+        bgcolor: bg,
+        color,
+        flexShrink: 0,
+      }}
+    >
+      {icon}
+    </Box>
+  )
+}
 
 function QuotaCard({ compact }: { compact: boolean }) {
   const { user, refresh } = useAuth()
@@ -81,59 +121,75 @@ function QuotaCard({ compact }: { compact: boolean }) {
   )
 }
 
-function DrawerNav({ onPick }: { onPick: () => void }) {
+function SidebarBody({ onPick }: { onPick: () => void }) {
   const { user } = useAuth()
   const nav = useNavigate()
   const { pathname } = useLocation()
 
-  const items: { label: string; icon: React.ReactNode; to: string; active?: boolean }[] = [
-    { label: 'All Files', icon: <DescriptionRounded />, to: '/', active: pathname === '/' || pathname.startsWith('/f/') },
-    { label: 'Images', icon: <ImageIcon />, to: '/c/image' },
-    { label: 'Videos', icon: <MovieRounded />, to: '/c/video' },
-    { label: 'Audio', icon: <AudiotrackRounded />, to: '/c/audio' },
-    { label: 'Documents', icon: <ArticleRounded />, to: '/c/doc' },
-    { label: 'Code', icon: <CodeRounded />, to: '/c/code' },
-    { label: 'Archives', icon: <FolderZipRounded />, to: '/c/archive' },
-    { label: 'Shared Links', icon: <ShareIcon />, to: '/shares', active: pathname.startsWith('/shares') },
-    { label: 'Account & Sessions', icon: <SecurityRounded />, to: '/account', active: pathname.startsWith('/account') },
-    ...(user?.is_admin
-      ? [{ label: 'Users & Quotas', icon: <PeopleAltRounded />, to: '/users', active: pathname.startsWith('/users') }]
-      : []),
+  const folderItems = [
+    { label: 'Images', to: '/f/Images', icon: <ImageIcon fontSize="small" />, color: kindColor.image, bg: kindBg.image },
+    { label: 'Videos', to: '/f/Videos', icon: <MovieRounded fontSize="small" />, color: kindColor.video, bg: kindBg.video },
+    { label: 'Audio', to: '/f/Audio', icon: <AudiotrackRounded fontSize="small" />, color: kindColor.audio, bg: kindBg.audio },
+    { label: 'Documents', to: '/f/Documents', icon: <ArticleRounded fontSize="small" />, color: kindColor.doc, bg: kindBg.doc },
+    { label: 'Code', to: '/f/Code', icon: <CodeRounded fontSize="small" />, color: kindColor.code, bg: kindBg.code },
+    { label: 'Archives', to: '/f/Archives', icon: <FolderZipRounded fontSize="small" />, color: kindColor.archive, bg: kindBg.archive },
   ]
+  const isAt = (to: string) => {
+    if (to === '/') return pathname === '/' || pathname.startsWith('/f/')
+    return pathname === to || pathname.startsWith(`${to}/`)
+  }
+  const item = (it: { label: string; to: string; icon: React.ReactNode; color: string; bg: string }) => (
+    <ListItemButton
+      key={it.to}
+      selected={isAt(it.to)}
+      onClick={() => { nav(it.to); onPick() }}
+      sx={ITEM_SX}
+    >
+      <NavBadge icon={it.icon} color={it.color} bg={it.bg} />
+      <ListItemText
+        primary={it.label}
+        slotProps={{ primary: { fontWeight: isAt(it.to) ? 600 : 400 } }}
+        sx={{ ml: 1.5 }}
+      />
+    </ListItemButton>
+  )
 
   return (
-    <List sx={{ flex: 1, overflowY: 'auto', py: 0 }}>
-      <ListItemButton selected={items[0].active} onClick={() => { nav('/'); onPick() }} sx={{ borderRadius: 2, mx: 1 }}>
-        <ListItemIcon sx={{ minWidth: 36 }}>{items[0].icon}</ListItemIcon>
-        <ListItemText primary={items[0].label} slotProps={{ primary: { fontWeight: items[0].active ? 600 : 400 } }} />
-      </ListItemButton>
-      <Typography variant="caption" color="text.secondary" sx={{ px: 3, pt: 1.5, pb: 0.5 }}>
-        Categories
-      </Typography>
-      {items.slice(1, 7).map(it => (
-        <ListItemButton
-          key={it.to}
-          selected={!!it.active}
-          onClick={() => { nav(it.to); onPick() }}
-          sx={{ borderRadius: 2, mx: 1 }}
-        >
-          <ListItemIcon sx={{ minWidth: 36 }}>{it.icon}</ListItemIcon>
-          <ListItemText primary={it.label} slotProps={{ primary: { fontWeight: it.active ? 600 : 400 } }} />
-        </ListItemButton>
-      ))}
-      <Divider sx={{ my: 1 }} />
-      {items.slice(7).map(it => (
-        <ListItemButton
-          key={it.to}
-          selected={!!it.active}
-          onClick={() => { nav(it.to); onPick() }}
-          sx={{ borderRadius: 2, mx: 1 }}
-        >
-          <ListItemIcon sx={{ minWidth: 36 }}>{it.icon}</ListItemIcon>
-          <ListItemText primary={it.label} slotProps={{ primary: { fontWeight: it.active ? 600 : 400 } }} />
-        </ListItemButton>
-      ))}
-    </List>
+    <Box sx={{ width: DRAWER_W, display: 'flex', flexDirection: 'column', height: '100%' }}>
+      <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 2.5, py: 2.25, flexShrink: 0 }}>
+        <Inventory2Rounded sx={{ color: 'primary.main' }} />
+        <Typography variant="h6" noWrap fontWeight={700}>rbox</Typography>
+        <Chip label="v0.2" size="small" sx={{ borderRadius: 1, height: 18, fontSize: '0.65rem' }} />
+      </Box>
+      <Divider />
+      <List sx={{ flex: 1, overflowY: 'auto', py: 0, whiteSpace: 'nowrap' }}>
+        <Typography variant="body2" sx={SECTION_SX}>Workspace</Typography>
+        {item({
+          label: 'All Files', to: '/',
+          icon: <FolderRounded fontSize="small" />,
+          color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.14)',
+        })}
+        {item({
+          label: 'Shared Links', to: '/shares',
+          icon: <ShareIcon fontSize="small" />,
+          color: kindColor.video, bg: kindBg.video,
+        })}
+        <Typography variant="body2" sx={SECTION_SX}>Folders</Typography>
+        {folderItems.map(item)}
+        <Typography variant="body2" sx={SECTION_SX}>System</Typography>
+        {item({
+          label: 'Account & Sessions', to: '/account',
+          icon: <SecurityRounded fontSize="small" />,
+          color: kindColor.doc, bg: kindBg.doc,
+        })}
+        {user?.is_admin && item({
+          label: 'Users & Quotas', to: '/users',
+          icon: <PeopleAltRounded fontSize="small" />,
+          color: kindColor.code, bg: kindBg.code,
+        })}
+      </List>
+      <QuotaCard compact={false} />
+    </Box>
   )
 }
 
@@ -142,11 +198,15 @@ export default function Shell() {
   const { mode, toggle } = useThemeToggle()
   const nav = useNavigate()
   const theme = useTheme()
-  const compact = useMediaQuery(theme.breakpoints.down('md'))
+  const md = useMediaQuery(theme.breakpoints.up('md'))
   const { pendingCount } = useUploads()
-  const [drawerOpen, setDrawerOpen] = useState(false)
+  // open by default on desktop, closed on mobile; the breakpoint crossing
+  // resnaps the default
+  const [sidebarOpen, setSidebarOpen] = useState(md)
   const [anchor, setAnchor] = useState<HTMLElement | null>(null)
   const [paletteOpen, setPaletteOpen] = useState(false)
+
+  useEffect(() => { setSidebarOpen(md) }, [md])
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -166,10 +226,6 @@ export default function Shell() {
   }
 
   const openPaletteResult = (target: string, isDir: boolean) => {
-    if (target.startsWith('cat:')) {
-      nav(`/c/${target.slice(4)}`)
-      return
-    }
     if (isDir) {
       nav(`/f/${target}`)
     } else {
@@ -186,134 +242,138 @@ export default function Shell() {
 
   return (
     <Box sx={{ display: 'flex', minHeight: '100vh' }}>
+      {/* desktop rail: a flex child, so the app bar and content are pushed
+          beside it and can never slide underneath */}
       <Box
-        component="header"
+        component="nav"
         sx={{
-          position: 'fixed',
-          top: 0,
-          left: 0,
-          right: 0,
-          zIndex: theme.zIndex.appBar,
-          ...surfaceBar,
-          backdropFilter: 'blur(12px)',
-          borderBottom: '1px solid',
-          borderColor: 'divider',
+          display: { xs: 'none', md: 'flex' },
+          flexDirection: 'column',
+          width: sidebarOpen ? DRAWER_W : 0,
+          flexShrink: 0,
+          overflow: 'hidden',
+          transition: 'width 200ms cubic-bezier(0.2, 0, 0, 1)',
         }}
       >
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, px: 1, minHeight: 56 }}>
-          {compact && (
-            <IconButton onClick={() => setDrawerOpen(true)} sx={{ color: 'text.primary' }}>
-              <MenuIcon />
-            </IconButton>
-          )}
-          <Box
-            onClick={() => setPaletteOpen(true)}
-            sx={{
-              display: 'flex',
-              alignItems: 'center',
-              gap: 1,
-              flex: 1,
-              maxWidth: 480,
-              cursor: 'text',
-              borderRadius: 2,
-              px: 1.5,
-              py: 0.75,
-              bgcolor: 'action.hover',
-              transition: 'background-color 150ms cubic-bezier(0.2, 0, 0, 1)',
-              '&:hover': { bgcolor: 'action.selected' },
-            }}
-          >
-            <SearchRounded sx={{ fontSize: 18, color: 'text.secondary' }} />
-            <Typography variant="body2" color="text.secondary" sx={{ flex: 1, display: { xs: 'none', sm: 'block' } }}>
-              Search files or press Ctrl+K
-            </Typography>
-            <Typography variant="body2" color="text.secondary" sx={{ flex: 1, display: { xs: 'block', sm: 'none' } }}>
-              Search
-            </Typography>
-            <Chip
-              label="Ctrl K"
-              size="small"
-              sx={{
-                display: { xs: 'none', md: 'flex' },
-                borderRadius: 1,
-                height: 18,
-                fontSize: '0.65rem',
-                bgcolor: 'transparent',
-                border: '1px solid',
-                borderColor: 'divider',
-              }}
-            />
-          </Box>
-          <Box sx={{ flex: 1 }} />
-          {pendingCount > 0 && (
-            <Tooltip title={`${pendingCount} upload${pendingCount > 1 ? 's' : ''} in progress`}>
-              <Badge badgeContent={pendingCount} color="primary">
-                <CloudUploadRounded sx={{ color: 'text.secondary', mx: 0.5 }} />
-              </Badge>
-            </Tooltip>
-          )}
-          <Tooltip title={mode === 'dark' ? 'Light mode' : 'Dark mode'}>
-            <IconButton onClick={toggle} sx={{ color: 'text.secondary' }}>
-              {mode === 'dark' ? <Brightness7 /> : <Brightness4 />}
-            </IconButton>
-          </Tooltip>
-          <Tooltip title="Account">
-            <IconButton onClick={e => setAnchor(e.currentTarget)} sx={{ color: 'text.primary' }}>
-              <AccountCircleRounded />
-            </IconButton>
-          </Tooltip>
-          <Menu anchorEl={anchor} open={!!anchor} onClose={() => setAnchor(null)}>
-            <MenuItem disabled>
-              {user?.username}{user?.is_admin ? ' (admin)' : ''}
-            </MenuItem>
-            <MenuItem onClick={() => { setAnchor(null); nav('/account'); refresh() }}>
-              <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', mr: 1 }}><SecurityRounded fontSize="small" /></Box> Account &amp; Sessions
-            </MenuItem>
-            <MenuItem onClick={doLogout}>
-              <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', mr: 1 }}><Logout fontSize="small" /></Box> Sign out
-            </MenuItem>
-          </Menu>
-        </Box>
+        <SidebarBody onPick={() => {}} />
       </Box>
 
-      <Drawer
-        variant={compact ? 'temporary' : 'permanent'}
-        open={compact ? drawerOpen : true}
-        onClose={() => setDrawerOpen(false)}
-        slotProps={{
-          paper: {
-            sx: {
-              width: DRAWER_W,
-              boxSizing: 'border-box',
-              borderRight: '1px solid',
-              borderColor: 'divider',
-              display: 'flex',
-              flexDirection: 'column',
+      {!md && (
+        <Drawer
+          variant="temporary"
+          open={sidebarOpen}
+          onClose={() => setSidebarOpen(false)}
+          slotProps={{
+            paper: {
+              sx: {
+                width: DRAWER_W,
+                boxSizing: 'border-box',
+                borderRight: '1px solid',
+                borderColor: 'divider',
+              },
             },
-          },
-        }}
-      >
-        <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 2, py: 2, flexShrink: 0 }}>
-          <Inventory2Rounded sx={{ color: 'primary.main' }} />
-          <Typography variant="h6" noWrap fontWeight={700}>rbox</Typography>
-          <Chip label="v0.1" size="small" sx={{ borderRadius: 1, height: 18, fontSize: '0.65rem' }} />
-        </Box>
-        <Divider />
-        <DrawerNav onPick={() => setDrawerOpen(false)} />
-        <QuotaCard compact={compact} />
-      </Drawer>
+          }}
+        >
+          <SidebarBody onPick={() => setSidebarOpen(false)} />
+        </Drawer>
+      )}
 
-      <Box
-        component="main"
-        sx={{
-          flexGrow: 1,
-          minWidth: 0,
-          p: { xs: 1.5, sm: 2 },
-          pt: { xs: '68px', sm: '72px' },
-          width: { md: `calc(100% - ${DRAWER_W}px)` },
-        }}
-      >
-        <Outlet />
+      <Box component="main" sx={{ flexGrow: 1, minWidth: 0, display: 'flex', flexDirection: 'column' }}>
+        <Box
+          component="header"
+          sx={{
+            position: 'sticky',
+            top: 0,
+            zIndex: theme.zIndex.appBar,
+            ...surfaceBar,
+            backdropFilter: 'blur(12px)',
+            borderBottom: '1px solid',
+            borderColor: 'divider',
+          }}
+        >
+          <Box sx={{ display: 'flex', alignItems: 'center', gap: 0.5, px: 1, minHeight: 56 }}>
+            <Tooltip title={sidebarOpen ? 'Hide sidebar' : 'Show sidebar'}>
+              <IconButton
+                aria-label="Toggle sidebar"
+                onClick={() => setSidebarOpen(o => !o)}
+                sx={{ color: 'text.primary' }}
+              >
+                <MenuIcon />
+              </IconButton>
+            </Tooltip>
+            <Box
+              onClick={() => setPaletteOpen(true)}
+              sx={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 1,
+                flex: 1,
+                maxWidth: 480,
+                cursor: 'text',
+                borderRadius: 2,
+                px: 1.5,
+                py: 0.75,
+                bgcolor: 'action.hover',
+                transition: 'background-color 150ms cubic-bezier(0.2, 0, 0, 1)',
+                '&:hover': { bgcolor: 'action.selected' },
+              }}
+            >
+              <SearchRounded sx={{ fontSize: 18, color: 'text.secondary' }} />
+              <Typography variant="body2" color="text.secondary" sx={{ flex: 1, display: { xs: 'none', sm: 'block' } }}>
+                Search files or press Ctrl+K
+              </Typography>
+              <Typography variant="body2" color="text.secondary" sx={{ flex: 1, display: { xs: 'block', sm: 'none' } }}>
+                Search
+              </Typography>
+              <Chip
+                label="Ctrl K"
+                size="small"
+                sx={{
+                  display: { xs: 'none', md: 'flex' },
+                  borderRadius: 1,
+                  height: 18,
+                  fontSize: '0.65rem',
+                  bgcolor: 'transparent',
+                  border: '1px solid',
+                  borderColor: 'divider',
+                }}
+              />
+            </Box>
+            <Box sx={{ flex: 1 }} />
+            {pendingCount > 0 && (
+              <Tooltip title={`${pendingCount} upload${pendingCount > 1 ? 's' : ''} in progress`}>
+                <Badge badgeContent={pendingCount} color="primary">
+                  <CloudUploadRounded sx={{ color: 'text.secondary', mx: 0.5 }} />
+                </Badge>
+              </Tooltip>
+            )}
+            <Tooltip title={mode === 'dark' ? 'Light mode' : 'Dark mode'}>
+              <IconButton onClick={toggle} sx={{ color: 'text.secondary' }}>
+                {mode === 'dark' ? <Brightness7 /> : <Brightness4 />}
+              </IconButton>
+            </Tooltip>
+            <Tooltip title="Account">
+              <IconButton onClick={e => setAnchor(e.currentTarget)} sx={{ color: 'text.primary' }}>
+                <AccountCircleRounded />
+              </IconButton>
+            </Tooltip>
+            <Menu anchorEl={anchor} open={!!anchor} onClose={() => setAnchor(null)}>
+              <MenuItem disabled>
+                {user?.username}{user?.is_admin ? ' (admin)' : ''}
+              </MenuItem>
+              <MenuItem onClick={() => { setAnchor(null); nav('/account'); refresh() }}>
+                <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', mr: 1 }}><SecurityRounded fontSize="small" /></Box> Account &amp; Sessions
+              </MenuItem>
+              <MenuItem onClick={doLogout}>
+                <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', mr: 1 }}><Logout fontSize="small" /></Box> Sign out
+              </MenuItem>
+            </Menu>
+          </Box>
+        </Box>
+
+        <Box sx={{ p: { xs: 1.5, sm: 2 }, flexGrow: 1 }}>
+          <Outlet />
+        </Box>
       </Box>
 
       <CommandPalette

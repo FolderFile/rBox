@@ -9,7 +9,8 @@ import Add from '@mui/icons-material/PersonAddAlt1Outlined'
 import RefreshOutlined from '@mui/icons-material/RefreshOutlined'
 import EditOutlined from '@mui/icons-material/EditOutlined'
 import DeleteOutline from '@mui/icons-material/DeleteOutline'
-import { api, AdminUser, fmtSize } from './api'
+import { api, AdminUser, fmtPercent, fmtRelative, fmtSize } from './api'
+import { UserAvatar } from './Shell'
 
 export default function Users() {
   const [users, setUsers] = useState<AdminUser[]>([])
@@ -63,39 +64,51 @@ export default function Users() {
               const pct = u.quota_bytes ? Math.min((u.used_bytes / u.quota_bytes) * 100, 100) : 0
               return (
                 <TableRow key={u.id} hover>
-                  <TableCell>{u.username}</TableCell>
                   <TableCell>
-                    {u.is_admin ? <Chip size="small" color="primary" label="admin" /> : <Chip size="small" variant="outlined" label="user" />}
+                    <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25 }}>
+                      <UserAvatar name={u.username} size={28} />
+                      <Typography variant="body2" fontWeight={600}>{u.username}</Typography>
+                    </Box>
+                  </TableCell>
+                  <TableCell>
+                    {u.is_admin
+                      ? <Chip size="small" color="primary" label="Admin" sx={{ borderRadius: 1 }} />
+                      : <Chip size="small" variant="outlined" label="Member" sx={{ borderRadius: 1 }} />}
                   </TableCell>
                   <TableCell>
                     <Tooltip title={`${fmtSize(u.used_bytes)} of ${fmtSize(u.quota_bytes)}`}>
                       <Box>
                         <LinearProgress
                           variant="determinate"
-                          value={pct}
+                          value={u.used_bytes > 0 ? Math.max(pct, 1.5) : 0}
                           color={pct > 95 ? 'error' : pct > 80 ? 'warning' : 'primary'}
                           sx={{ height: 6, borderRadius: 3 }}
                         />
-                        <Typography variant="caption" color="text.secondary">
-                          {fmtSize(u.used_bytes)} / {fmtSize(u.quota_bytes)}
+                        <Typography variant="caption" color="text.secondary" sx={{ display: 'flex', justifyContent: 'space-between', gap: 1, mt: 0.25, fontVariantNumeric: 'tabular-nums' }}>
+                          <span>{fmtSize(u.used_bytes)} of {fmtSize(u.quota_bytes)}</span>
+                          <span>{fmtPercent(u.used_bytes, u.quota_bytes)}</span>
                         </Typography>
                       </Box>
                     </Tooltip>
                   </TableCell>
-                  <TableCell>{u.created_at.replace('T', ' ').replace(/\.\d+Z$/, '')}</TableCell>
+                  <TableCell sx={{ color: 'text.secondary', whiteSpace: 'nowrap' }}>
+                    <Tooltip title={new Date(u.created_at).toLocaleString()}>
+                      <span>{fmtRelative(Date.parse(u.created_at) / 1000)}</span>
+                    </Tooltip>
+                  </TableCell>
                   <TableCell align="right">
                     <Tooltip title="Recalculate disk usage">
-                      <IconButton size="small" onClick={() => api.post(`/api/admin/users/${u.username}/recalc`).then(() => ok(`Recalculated ${u.username}`)).catch(fail)}>
+                      <IconButton aria-label={`Recalculate disk usage for ${u.username}`} size="small" onClick={() => api.post(`/api/admin/users/${encodeURIComponent(u.username)}/recalc`).then(() => ok(`Recalculated ${u.username}`)).catch(fail)}>
                         <RefreshOutlined fontSize="small" />
                       </IconButton>
                     </Tooltip>
                     <Tooltip title="Edit">
-                      <IconButton size="small" onClick={() => setEditing(u)}>
+                      <IconButton aria-label={`Edit ${u.username}`} size="small" onClick={() => setEditing(u)}>
                         <EditOutlined fontSize="small" />
                       </IconButton>
                     </Tooltip>
                     <Tooltip title="Delete">
-                      <IconButton size="small" onClick={() => setDeleting(u)}>
+                      <IconButton aria-label={`Delete ${u.username}`} size="small" onClick={() => setDeleting(u)}>
                         <DeleteOutline fontSize="small" />
                       </IconButton>
                     </Tooltip>
@@ -149,7 +162,7 @@ function CreateDialog({ onCancel, onDone, onFail }: { onCancel: () => void; onDo
 
   const submit = async () => {
     const q = parseQuota(quota)
-    if (!q) return setErr('bad quota (e.g. 500MB, 10GB)')
+    if (q === null || !Number.isFinite(q) || q <= 0) return setErr('bad quota (e.g. 500MB, 10GB)')
     try {
       await api.post('/api/admin/users', { username, password, quota_bytes: q, is_admin: false })
       onDone(username)
@@ -179,18 +192,26 @@ function CreateDialog({ onCancel, onDone, onFail }: { onCancel: () => void; onDo
 }
 
 function EditDialog({ user, onCancel, onDone, onFail }: { user: AdminUser; onCancel: () => void; onDone: (msg: string) => void; onFail: (e: any) => void }) {
-  const [quota, setQuota] = useState(fmtSize(user.quota_bytes))
+  // the field shows a rounded size ("1.5 GiB"); only an edited value is sent,
+  // so saving a password change never rewrites an exact byte quota
+  const initialQuota = fmtSize(user.quota_bytes)
+  const [quota, setQuota] = useState(initialQuota)
   const [password, setPassword] = useState('')
   const [isAdmin, setIsAdmin] = useState(user.is_admin)
   const [err, setErr] = useState('')
 
   const submit = async () => {
-    const body: Record<string, unknown> = { is_admin: isAdmin }
-    const q = parseQuota(quota)
-    if (q) body.quota_bytes = q
+    const body: Record<string, unknown> = {}
+    if (isAdmin !== user.is_admin) body.is_admin = isAdmin
+    if (quota.trim() !== initialQuota) {
+      const q = parseQuota(quota)
+      if (q === null || !Number.isFinite(q) || q <= 0) return setErr('bad quota (e.g. 500MB, 10GB)')
+      body.quota_bytes = q
+    }
     if (password) body.password = password
+    if (!Object.keys(body).length) return onCancel()
     try {
-      await api.patch(`/api/admin/users/${user.username}`, body)
+      await api.patch(`/api/admin/users/${encodeURIComponent(user.username)}`, body)
       onDone(`Updated ${user.username}`)
     } catch (e: any) {
       setErr(e.message)
@@ -226,7 +247,7 @@ function DeleteDialog({ user, onCancel, onDone, onFail }: { user: AdminUser; onC
 
   const submit = async () => {
     try {
-      await api.del(`/api/admin/users/${user.username}${purge ? '?purge=true' : ''}`)
+      await api.del(`/api/admin/users/${encodeURIComponent(user.username)}${purge ? '?purge=true' : ''}`)
       onDone(`Deleted ${user.username}`)
     } catch (e: any) {
       setErr(e.message)

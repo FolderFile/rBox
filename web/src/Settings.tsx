@@ -16,6 +16,7 @@ import Visibility from '@mui/icons-material/VisibilityRounded'
 import VisibilityOff from '@mui/icons-material/VisibilityOffRounded'
 import DeleteOutline from '@mui/icons-material/DeleteOutline'
 import DarkModeRounded from '@mui/icons-material/DarkModeRounded'
+import SettingsBrightnessRounded from '@mui/icons-material/SettingsBrightnessRounded'
 import LightModeRounded from '@mui/icons-material/LightModeRounded'
 import TableRowsRounded from '@mui/icons-material/TableRowsRounded'
 import ViewListRounded from '@mui/icons-material/ViewListRounded'
@@ -23,16 +24,10 @@ import GridViewRounded from '@mui/icons-material/GridViewRounded'
 import CheckCircle from '@mui/icons-material/CheckCircleRounded'
 import { api, fmtSize, parseUserAgent, SessionRow } from './api'
 import { useAuth } from './auth'
-import { useThemeToggle } from './App'
-
+import { useThemeToggle } from './theme-ctx'
 // everything in Preferences is a plain default: read by Files/Editor on
 // mount, so there is no broadcast plumbing to keep in sync
-export const PREFS = {
-  view: 'rbox-view',
-  fontSize: 'rbox-editor-fontsize',
-  wrap: 'rbox-editor-wrap',
-  lineNumbers: 'rbox-editor-linenums',
-}
+import { PREFS, readPref, writePref } from './prefs'
 
 function Section({
   icon, title, subtitle, action, children,
@@ -133,22 +128,22 @@ function PasswordField({ label, value, onChange, error, helperText }: {
 
 export default function Settings() {
   const { user, refresh } = useAuth()
-  const { mode, toggle } = useThemeToggle()
+  const { pref: themePref, setPref: setThemePref } = useThemeToggle()
 
   // storage
   const [recalcBusy, setRecalcBusy] = useState(false)
   const [recalcMsg, setRecalcMsg] = useState('')
 
   // preferences
-  const [view, setView] = useState<string>(() => localStorage.getItem(PREFS.view) ?? 'table')
-  const [fontSize, setFontSize] = useState<number>(() => Number(localStorage.getItem(PREFS.fontSize) ?? 14))
-  const [wrap, setWrap] = useState<boolean>(() => (localStorage.getItem(PREFS.wrap) ?? 'on') === 'on')
-  const [lineNums, setLineNums] = useState<boolean>(() => (localStorage.getItem(PREFS.lineNumbers) ?? 'on') === 'on')
+  const [view, setView] = useState<string>(() => readPref(PREFS.view) ?? 'table')
+  const [fontSize, setFontSize] = useState<number>(() => Number(readPref(PREFS.fontSize) ?? 14))
+  const [wrap, setWrap] = useState<boolean>(() => (readPref(PREFS.wrap) ?? 'on') === 'on')
+  const [lineNums, setLineNums] = useState<boolean>(() => (readPref(PREFS.lineNumbers) ?? 'on') === 'on')
 
-  useEffect(() => { localStorage.setItem(PREFS.view, view) }, [view])
-  useEffect(() => { localStorage.setItem(PREFS.fontSize, String(fontSize)) }, [fontSize])
-  useEffect(() => { localStorage.setItem(PREFS.wrap, wrap ? 'on' : 'off') }, [wrap])
-  useEffect(() => { localStorage.setItem(PREFS.lineNumbers, lineNums ? 'on' : 'off') }, [lineNums])
+  useEffect(() => { writePref(PREFS.view, view) }, [view])
+  useEffect(() => { writePref(PREFS.fontSize, String(fontSize)) }, [fontSize])
+  useEffect(() => { writePref(PREFS.wrap, wrap ? 'on' : 'off') }, [wrap])
+  useEffect(() => { writePref(PREFS.lineNumbers, lineNums ? 'on' : 'off') }, [lineNums])
 
   // security
   const [currentPw, setCurrentPw] = useState('')
@@ -221,10 +216,11 @@ export default function Settings() {
 
   const revokeAll = async () => {
     const others = sessions.filter(s => !s.current)
-    for (const s of others) {
-      await api.del(`/api/auth/sessions/${s.id}`).catch(() => {})
-    }
-    setSnack(`${others.length} session${others.length === 1 ? '' : 's'} revoked`)
+    const results = await Promise.allSettled(others.map(s => api.del(`/api/auth/sessions/${s.id}`)))
+    const ok = results.filter(r => r.status === 'fulfilled').length
+    setSnack(ok === others.length
+      ? `${ok} session${ok === 1 ? '' : 's'} revoked`
+      : `Revoked ${ok} of ${others.length} sessions`)
     loadSessions()
   }
 
@@ -276,9 +272,11 @@ export default function Settings() {
         <Stack spacing={2}>
           <SegControl
             label="Theme"
-            value={mode}
-            onChange={() => toggle()}
+            value={themePref}
+            onChange={setThemePref}
+            hint={themePref === 'system' ? 'Follows your device setting.' : undefined}
             options={[
+              { value: 'system', label: 'System', icon: <SettingsBrightnessRounded fontSize="small" /> },
               { value: 'light', label: 'Light', icon: <LightModeRounded fontSize="small" /> },
               { value: 'dark', label: 'Dark', icon: <DarkModeRounded fontSize="small" /> },
             ]}

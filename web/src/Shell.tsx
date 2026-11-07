@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react'
+import { Suspense, useEffect, useState } from 'react'
 import {
-  Badge, Box, Chip, Divider, Drawer, IconButton, List,
-  ListItemButton, ListItemText, LinearProgress, Menu, MenuItem,
+  Avatar, Badge, Box, Chip, CircularProgress, Divider, Drawer, IconButton, List,
+  ListItemButton, ListItemIcon, ListItemText, LinearProgress, Menu, MenuItem,
   Tooltip, Typography, useMediaQuery, useTheme,
 } from '@mui/material'
 import FolderRounded from '@mui/icons-material/FolderRounded'
@@ -13,7 +13,6 @@ import Brightness7 from '@mui/icons-material/Brightness7Rounded'
 import MenuIcon from '@mui/icons-material/MenuRounded'
 import Logout from '@mui/icons-material/LogoutRounded'
 import SearchRounded from '@mui/icons-material/SearchRounded'
-import AccountCircleRounded from '@mui/icons-material/AccountCircleRounded'
 import CloudUploadRounded from '@mui/icons-material/CloudUploadRounded'
 import RefreshRounded from '@mui/icons-material/RefreshRounded'
 import FolderZipRounded from '@mui/icons-material/FolderZipRounded'
@@ -23,16 +22,34 @@ import AudiotrackRounded from '@mui/icons-material/AudiotrackRounded'
 import DescriptionRounded from '@mui/icons-material/DescriptionRounded'
 import CodeRounded from '@mui/icons-material/CodeRounded'
 import { Outlet, useLocation, useNavigate } from 'react-router-dom'
-import { api, fmtSize } from './api'
+import { api, fmtPercent, fmtSize } from './api'
 import { useUploads } from './uploads'
 import { useAuth } from './auth'
-import { useThemeToggle } from './App'
+import { useThemeToggle } from './theme-ctx'
+import { Wordmark } from './Wordmark'
 import { CommandPalette } from './CommandPalette'
 import { getEntryVisuals } from './fileicons'
-import { kindBg, kindColor } from './filetypes'
+import { DEFAULT_FOLDERS, kindBg, kindColor } from './filetypes'
 import { SURFACE } from './theme'
 
 export const DRAWER_W = 220
+
+// deterministic hue per name, so a user keeps their color everywhere
+export function UserAvatar({ name, size = 28 }: { name: string; size?: number }) {
+  let h = 0
+  for (const ch of name) h = (h * 31 + ch.charCodeAt(0)) % 360
+  return (
+    <Avatar
+      aria-hidden
+      sx={{
+        width: size, height: size, fontSize: size * 0.42, fontWeight: 700,
+        bgcolor: `hsl(${h}, 62%, 46%)`, color: '#fff',
+      }}
+    >
+      {(name[0] ?? '?').toUpperCase()}
+    </Avatar>
+  )
+}
 
 const SECTION_SX = {
   textTransform: 'uppercase',
@@ -55,39 +72,6 @@ const ITEM_SX = {
   minHeight: 32,
 }
 
-export function Wordmark({ size = 28 }: { size?: number }) {
-  return (
-    <Box sx={{ display: 'inline-flex', alignItems: 'center', gap: 1.25, flexShrink: 0 }}>
-      <Box
-        component="img"
-        src="/logo.png"
-        alt="rBox logo"
-        sx={{ width: size, height: size, borderRadius: 1, objectFit: 'cover', flexShrink: 0 }}
-      />
-      <Typography
-        component="span"
-        sx={{
-          fontFamily: '"Inter", sans-serif',
-          fontWeight: 700,
-          letterSpacing: '-0.03em',
-          fontSize: size * 0.82,
-          lineHeight: 1,
-          color: 'text.primary',
-        }}
-      >
-        r
-        <Box
-          component="span"
-          sx={{ color: t => (t.palette.mode === 'dark' ? '#ffffff' : t.palette.text.primary) }}
-        >
-          B
-        </Box>
-        ox
-      </Typography>
-    </Box>
-  )
-}
-
 function NavBadge({ icon, color, bg }: { icon: React.ReactNode; color: string; bg: string }) {
   return (
     <Box
@@ -105,7 +89,11 @@ function QuotaCard() {
   const { user, refresh } = useAuth()
   const [busy, setBusy] = useState(false)
   if (!user) return null
-  const pct = user.quota_bytes ? Math.min((user.used_bytes / user.quota_bytes) * 100, 100) : 0
+  const ratio = user.quota_bytes ? user.used_bytes / user.quota_bytes : 0
+  const pct = Math.min(ratio * 100, 100)
+  // a non-empty vault always shows a sliver, so the bar never reads as empty
+  const shown = user.used_bytes > 0 ? Math.max(pct, 1.5) : 0
+  const tone = pct > 95 ? 'error' : pct > 80 ? 'warning' : 'primary'
   const recalc = async () => {
     setBusy(true)
     try {
@@ -118,31 +106,37 @@ function QuotaCard() {
     }
   }
   return (
-    <Box sx={{ p: 1.25, m: 1.25, mt: 1, borderRadius: 1.5, bgcolor: 'action.hover', flexShrink: 0 }}>
-      <Box sx={{ display: 'flex', alignItems: 'center', mb: 0.75 }}>
+    <Box sx={{ p: 1.5, m: 1.25, mt: 1, borderRadius: 1.5, border: '1px solid', borderColor: 'divider', flexShrink: 0 }}>
+      <Box sx={{ display: 'flex', alignItems: 'baseline', mb: 0.75 }}>
         <Typography variant="body2" fontWeight={600} sx={{ flex: 1 }}>Storage</Typography>
-        <Chip
-          size="small"
-          label={`${pct.toFixed(pct < 10 ? 1 : 0)}%`}
-          color={pct > 95 ? 'error' : pct > 80 ? 'warning' : 'default'}
-          sx={{ borderRadius: 1, height: 20 }}
-        />
+        <Typography
+          variant="caption"
+          fontWeight={600}
+          color={tone === 'primary' ? 'text.secondary' : `${tone}.main`}
+          sx={{ fontVariantNumeric: 'tabular-nums' }}
+        >
+          {fmtPercent(user.used_bytes, user.quota_bytes)}
+        </Typography>
         {user.is_admin && (
-          <Tooltip title="Recalculate usage">
-            <IconButton size="small" onClick={recalc} disabled={busy} sx={{ ml: 0.5 }}>
-              <RefreshRounded sx={{ fontSize: 15 }} />
-            </IconButton>
+          <Tooltip title="Recalculate usage from disk">
+            <span>
+              <IconButton aria-label="Recalculate usage" size="small" onClick={recalc} disabled={busy} sx={{ ml: 0.25, my: -0.5, mr: -0.75 }}>
+                <RefreshRounded sx={{ fontSize: 15, animation: busy ? 'rbox-spin 900ms linear infinite' : 'none', '@keyframes rbox-spin': { to: { transform: 'rotate(360deg)' } } }} />
+              </IconButton>
+            </span>
           </Tooltip>
         )}
       </Box>
       <LinearProgress
         variant="determinate"
-        value={pct}
-        color={pct > 95 ? 'error' : pct > 80 ? 'warning' : 'primary'}
-        sx={{ height: 5, borderRadius: 2.5 }}
+        value={shown}
+        color={tone}
+        aria-label={`Storage ${fmtPercent(user.used_bytes, user.quota_bytes)} used`}
+        sx={{ height: 6, borderRadius: 3 }}
       />
-      <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block', mt: 0.5 }}>
-        {fmtSize(user.used_bytes)} of {fmtSize(user.quota_bytes)}
+      <Typography variant="caption" color="text.secondary" noWrap sx={{ display: 'block', mt: 0.75 }}>
+        <Box component="span" sx={{ color: 'text.primary', fontWeight: 600 }}>{fmtSize(user.used_bytes)}</Box>
+        {' '}of {fmtSize(user.quota_bytes)} used
       </Typography>
     </Box>
   )
@@ -174,18 +168,24 @@ function SidebarBody({ onPick }: { onPick: () => void }) {
 
   // folder icons are resolved through the same helper the explorer uses, so
   // a "Code" folder in the sidebar and in My Files wear the same badge
-  const folderItems = ['Images', 'Videos', 'Audio', 'Documents', 'Code', 'Archives'].map(name => {
+  const folderItems = DEFAULT_FOLDERS.map(name => {
     const v = getEntryVisuals({ name, is_dir: true })
     return { label: name, to: `/f/${name}`, iconKey: v.iconKey, color: v.color, bg: v.bg }
   })
+  const shortcut = DEFAULT_FOLDERS.find(name => {
+    const to = `/f/${encodeURIComponent(name)}`
+    return pathname === to || pathname.startsWith(`${to}/`) || pathname === `/f/${name}` || pathname.startsWith(`/f/${name}/`)
+  })
   const isAt = (to: string) => {
-    if (to === '/') return pathname === '/' || pathname.startsWith('/f/')
+    if (to === '/') return (pathname === '/' || pathname.startsWith('/f/')) && !shortcut
+    if (to.startsWith('/f/')) return to === `/f/${shortcut}`
     return pathname === to || pathname.startsWith(`${to}/`)
   }
   const item = (it: { label: string; to: string; iconKey: string; color: string; bg: string }) => (
     <ListItemButton
       key={it.to}
       selected={isAt(it.to)}
+      aria-current={isAt(it.to) ? 'page' : undefined}
       onClick={() => { nav(it.to); onPick() }}
       sx={ITEM_SX}
     >
@@ -205,7 +205,9 @@ function SidebarBody({ onPick }: { onPick: () => void }) {
     }}>
       <Box sx={{ display: 'flex', alignItems: 'center', gap: 1, px: 2, py: 1.5, flexShrink: 0 }}>
         <Wordmark />
-        <Chip label="v0.4" size="small" sx={{ borderRadius: 1, height: 18, fontSize: '0.65rem' }} />
+        {user?.version && (
+          <Chip label={`v${user.version}`} size="small" sx={{ borderRadius: 1, height: 18, fontSize: '0.65rem', fontVariantNumeric: 'tabular-nums' }} />
+        )}
       </Box>
       <Divider sx={{ opacity: 0.7 }} />
       <List sx={{ flex: 1, overflowY: 'auto', overflowX: 'hidden', py: 0, whiteSpace: 'nowrap' }}>
@@ -361,8 +363,18 @@ export default function Shell() {
             </Tooltip>
             {!md && <Wordmark size={20} />}
             <Box
+              role="button"
+              tabIndex={0}
+              aria-label="Search files (Ctrl+K)"
               onClick={() => setPaletteOpen(true)}
+              onKeyDown={e => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault()
+                  setPaletteOpen(true)
+                }
+              }}
               sx={{
+                '&:focus-visible': { outline: '2px solid', outlineColor: 'primary.main' },
                 display: 'flex', alignItems: 'center', gap: 1, flex: 1,
                 maxWidth: 420, cursor: 'text', borderRadius: 1,
                 px: 1.5, py: 0.5, mx: { xs: 0, sm: 1 },
@@ -396,32 +408,61 @@ export default function Shell() {
                 {mode === 'dark' ? <Brightness7 /> : <Brightness4 />}
               </IconButton>
             </Tooltip>
-            <Tooltip title="Settings">
-              <IconButton aria-label="Settings" onClick={() => { nav('/settings'); refresh() }} sx={{ color: 'text.secondary' }}>
-                <SettingsRounded />
-              </IconButton>
-            </Tooltip>
             <Tooltip title="Account">
-              <IconButton aria-label="Account" onClick={e => setAnchor(e.currentTarget)} sx={{ color: 'text.primary' }}>
-                <AccountCircleRounded />
+              <IconButton
+                aria-label="Account menu"
+                aria-haspopup="menu"
+                aria-expanded={!!anchor}
+                onClick={e => setAnchor(e.currentTarget)}
+                sx={{ p: 0.5, ml: 0.25 }}
+              >
+                <UserAvatar name={user?.username ?? ''} size={28} />
               </IconButton>
             </Tooltip>
-            <Menu anchorEl={anchor} open={!!anchor} onClose={() => setAnchor(null)}>
-              <MenuItem disabled>
-                {user?.username}{user?.is_admin ? ' (admin)' : ''}
-              </MenuItem>
+            <Menu
+              anchorEl={anchor}
+              open={!!anchor}
+              onClose={() => setAnchor(null)}
+              anchorOrigin={{ vertical: 'bottom', horizontal: 'right' }}
+              transformOrigin={{ vertical: 'top', horizontal: 'right' }}
+              slotProps={{ paper: { sx: { minWidth: 220, mt: 0.5 } } }}
+            >
+              <Box sx={{ display: 'flex', alignItems: 'center', gap: 1.25, px: 2, py: 1.25 }}>
+                <UserAvatar name={user?.username ?? ''} size={34} />
+                <Box sx={{ minWidth: 0 }}>
+                  <Typography variant="body2" fontWeight={600} noWrap>{user?.username}</Typography>
+                  <Typography variant="caption" color="text.secondary">
+                    {user?.is_admin ? 'Administrator' : 'Member'}
+                  </Typography>
+                </Box>
+              </Box>
+              <Divider sx={{ my: 0.5 }} />
               <MenuItem onClick={() => { setAnchor(null); nav('/settings'); refresh() }}>
-                <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', mr: 1 }}><SettingsRounded fontSize="small" /></Box> Settings
+                <ListItemIcon><SettingsRounded fontSize="small" /></ListItemIcon> Settings
               </MenuItem>
+              <MenuItem onClick={() => { setAnchor(null); toggle() }}>
+                <ListItemIcon>{mode === 'dark' ? <Brightness7 fontSize="small" /> : <Brightness4 fontSize="small" />}</ListItemIcon>
+                {mode === 'dark' ? 'Light mode' : 'Dark mode'}
+              </MenuItem>
+              <Divider sx={{ my: 0.5 }} />
               <MenuItem onClick={doLogout}>
-                <Box component="span" sx={{ display: 'inline-flex', alignItems: 'center', mr: 1 }}><Logout fontSize="small" /></Box> Sign out
+                <ListItemIcon><Logout fontSize="small" /></ListItemIcon> Sign out
               </MenuItem>
             </Menu>
           </Box>
         </Box>
 
         <Box sx={{ p: { xs: 1.25, sm: 1.5 }, flexGrow: 1, maxWidth: '100%', boxSizing: 'border-box' }}>
-          <Outlet />
+          {/* settings, shares and users are split into their own chunks */}
+          <Suspense
+            fallback={
+              <Box sx={{ display: 'flex', justifyContent: 'center', py: 6 }}>
+                <CircularProgress size={22} />
+              </Box>
+            }
+          >
+            <Outlet />
+          </Suspense>
         </Box>
       </Box>
 

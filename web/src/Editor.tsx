@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import {
   Box, Button, Chip, CircularProgress, Dialog, DialogContent, IconButton,
   Snackbar, Tooltip, Typography,
@@ -14,102 +14,113 @@ import { EditorView, keymap } from '@codemirror/view'
 import { Prec, type Extension } from '@codemirror/state'
 import { StreamLanguage, syntaxHighlighting, defaultHighlightStyle } from '@codemirror/language'
 import { oneDark } from '@codemirror/theme-one-dark'
-import { html } from '@codemirror/lang-html'
-import { css } from '@codemirror/lang-css'
-import { javascript } from '@codemirror/lang-javascript'
-import { json } from '@codemirror/lang-json'
-import { markdown } from '@codemirror/lang-markdown'
-import { rust } from '@codemirror/lang-rust'
-import { python } from '@codemirror/lang-python'
-import { sql } from '@codemirror/lang-sql'
-import { xml } from '@codemirror/lang-xml'
-import { yaml as lezerYaml } from '@codemirror/lang-yaml'
-import { lua } from '@codemirror/legacy-modes/mode/lua'
-import { shell } from '@codemirror/legacy-modes/mode/shell'
-import { toml } from '@codemirror/legacy-modes/mode/toml'
-import { go } from '@codemirror/legacy-modes/mode/go'
-import { c, cpp, java, csharp, kotlin, scala } from '@codemirror/legacy-modes/mode/clike'
-import { swift } from '@codemirror/legacy-modes/mode/swift'
-import { ruby } from '@codemirror/legacy-modes/mode/ruby'
-import { dockerFile } from '@codemirror/legacy-modes/mode/dockerfile'
-import { diff } from '@codemirror/legacy-modes/mode/diff'
-import { properties } from '@codemirror/legacy-modes/mode/properties'
-import { r } from '@codemirror/legacy-modes/mode/r'
-import { perl } from '@codemirror/legacy-modes/mode/perl'
-import { haskell } from '@codemirror/legacy-modes/mode/haskell'
-import { erlang } from '@codemirror/legacy-modes/mode/erlang'
-import { groovy } from '@codemirror/legacy-modes/mode/groovy'
-import { powerShell } from '@codemirror/legacy-modes/mode/powershell'
 import { api } from './api'
-import { useThemeToggle } from './App'
+import { useThemeToggle } from './theme-ctx'
 import { ConfirmDialog } from './dialogs'
-import { PREFS } from './Settings'
+import { PREFS, readPref } from './prefs'
 
 const FONT_SIZES = [12, 14, 16]
 const MONO = '"JetBrains Mono", ui-monospace, "SF Mono", Consolas, monospace'
 
-// every dev extension resolves to a real grammar. languages without a lezer
-// package ride CodeMirror 5's stream modes through StreamLanguage; dart has
-// no stream mode, so it borrows java's (near-identical token family)
-const legacy = (parser: any): Extension => StreamLanguage.define(parser) as unknown as Extension
+// grammars are loaded on demand: each one is its own small chunk, so the
+// editor core opens without shipping every language up front. languages
+// without a lezer package ride CodeMirror 5's stream modes; dart has no
+// stream mode, so it borrows java's (near-identical token family)
+type Loader = () => Promise<Extension>
+const legacy = (load: () => Promise<any>, key: string): Loader => () =>
+  load().then(m => StreamLanguage.define(m[key]) as unknown as Extension)
 
-function langFor(name: string): { code: Extension[]; label: string; notepad?: boolean } {
+const clike = () => import('@codemirror/legacy-modes/mode/clike')
+const shellMode = () => import('@codemirror/legacy-modes/mode/shell')
+const tomlMode = () => import('@codemirror/legacy-modes/mode/toml')
+const dockerMode = () => import('@codemirror/legacy-modes/mode/dockerfile')
+const propsMode = () => import('@codemirror/legacy-modes/mode/properties')
+const erlangMode = () => import('@codemirror/legacy-modes/mode/erlang')
+const html = () => import('@codemirror/lang-html').then(m => m.html())
+const cssLang = () => import('@codemirror/lang-css').then(m => m.css())
+
+interface LangSpec {
+  label: string
+  notepad?: boolean
+  load?: Loader
+}
+
+function langFor(name: string): LangSpec {
   const lower = name.toLowerCase()
   const ext = lower.split('.').pop() ?? ''
-  const plain = (label: string, notepad = false) => ({ code: [] as Extension[], label, notepad })
 
-  if (lower === 'makefile' || ext === 'mk') return { code: [legacy(shell)], label: 'Makefile' }
-  if (lower === 'dockerfile' || ext === 'dockerfile') return { code: [legacy(dockerFile)], label: 'Dockerfile' }
-  if (lower === 'cargo.lock' || lower === 'go.sum' || lower === 'go.mod') return { code: [legacy(toml)], label: 'Lockfile' }
+  if (lower === 'makefile' || ext === 'mk') return { label: 'Makefile', load: legacy(shellMode, 'shell') }
+  if (lower === 'dockerfile' || ext === 'dockerfile') return { label: 'Dockerfile', load: legacy(dockerMode, 'dockerFile') }
+  if (lower === 'cargo.lock' || lower === 'go.sum' || lower === 'go.mod') return { label: 'Lockfile', load: legacy(tomlMode, 'toml') }
 
   switch (ext) {
-    case 'html': case 'htm': return { code: [html()], label: 'HTML' }
-    case 'vue': case 'svelte': case 'astro': return { code: [html()], label: ext.toUpperCase() }
-    case 'xml': case 'svg': return { code: [xml()], label: 'XML' }
-    case 'css': return { code: [css()], label: 'CSS' }
-    case 'scss': case 'sass': case 'less': return { code: [css()], label: 'SCSS' }
-    case 'js': case 'mjs': case 'cjs': return { code: [javascript()], label: 'JavaScript' }
-    case 'jsx': return { code: [javascript({ jsx: true })], label: 'JSX' }
-    case 'ts': return { code: [javascript({ typescript: true })], label: 'TypeScript' }
-    case 'tsx': return { code: [javascript({ typescript: true, jsx: true })], label: 'TSX' }
-    case 'json': case 'jsonc': return { code: [json()], label: 'JSON' }
-    case 'md': case 'mdx': return { code: [markdown()], label: 'Markdown' }
-    case 'rs': return { code: [rust()], label: 'Rust' }
-    case 'py': return { code: [python()], label: 'Python' }
-    case 'sql': return { code: [sql()], label: 'SQL' }
-    case 'yaml': case 'yml': return { code: [lezerYaml()], label: 'YAML' }
-    case 'toml': return { code: [legacy(toml)], label: 'TOML' }
-    case 'lua': return { code: [legacy(lua)], label: 'Lua' }
-    case 'sh': case 'bash': case 'zsh': case 'fish': return { code: [legacy(shell)], label: 'Shell' }
-    case 'ps1': return { code: [legacy(powerShell)], label: 'PowerShell' }
-    case 'go': return { code: [legacy(go)], label: 'Go' }
-    case 'c': case 'h': return { code: [legacy(c)], label: 'C' }
-    case 'cpp': case 'hpp': case 'cc': return { code: [legacy(cpp)], label: 'C++' }
-    case 'cs': return { code: [legacy(csharp)], label: 'C#' }
-    case 'java': return { code: [legacy(java)], label: 'Java' }
-    case 'kt': return { code: [legacy(kotlin)], label: 'Kotlin' }
-    case 'swift': return { code: [legacy(swift)], label: 'Swift' }
-    case 'scala': return { code: [legacy(scala)], label: 'Scala' }
-    case 'dart': return { code: [legacy(java)], label: 'Dart' }
-    case 'zig': return { code: [legacy(cpp)], label: 'Zig' }
-    case 'rb': return { code: [legacy(ruby)], label: 'Ruby' }
-    case 'ex': case 'exs': return { code: [legacy(erlang)], label: 'Elixir' }
-    case 'erl': return { code: [legacy(erlang)], label: 'Erlang' }
-    case 'dockerfile': return { code: [legacy(dockerFile)], label: 'Dockerfile' }
-    case 'diff': return { code: [legacy(diff)], label: 'Diff' }
-    case 'ini': case 'cfg': case 'conf': case 'properties': case 'gitignore': return { code: [legacy(properties)], label: 'Config' }
-    case 'env': return { code: [legacy(properties)], label: '.env' }
-    case 'r': return { code: [legacy(r)], label: 'R' }
-    case 'pl': return { code: [legacy(perl)], label: 'Perl' }
-    case 'hs': return { code: [legacy(haskell)], label: 'Haskell' }
-    case 'clj': return { code: [legacy(erlang)], label: 'Clojure' }
-    case 'gradle': return { code: [legacy(groovy)], label: 'Gradle' }
-    case 'nix': return plain('Nix')
-    case 'php': return { code: [legacy(cpp)], label: 'PHP' }
-    case 'bat': case 'cmd': return plain('Batch')
-    case 'txt': case 'log': case 'csv': case 'rtf': return plain('Text', true)
-    default: return plain(ext ? ext.toUpperCase() : 'Text')
+    case 'html': case 'htm': return { label: 'HTML', load: html }
+    case 'vue': case 'svelte': case 'astro': return { label: ext.toUpperCase(), load: html }
+    case 'xml': case 'svg': return { label: 'XML', load: () => import('@codemirror/lang-xml').then(m => m.xml()) }
+    case 'css': return { label: 'CSS', load: cssLang }
+    case 'scss': case 'sass': case 'less': return { label: 'SCSS', load: cssLang }
+    case 'js': case 'mjs': case 'cjs': return { label: 'JavaScript', load: () => import('@codemirror/lang-javascript').then(m => m.javascript()) }
+    case 'jsx': return { label: 'JSX', load: () => import('@codemirror/lang-javascript').then(m => m.javascript({ jsx: true })) }
+    case 'ts': return { label: 'TypeScript', load: () => import('@codemirror/lang-javascript').then(m => m.javascript({ typescript: true })) }
+    case 'tsx': return { label: 'TSX', load: () => import('@codemirror/lang-javascript').then(m => m.javascript({ typescript: true, jsx: true })) }
+    case 'json': case 'jsonc': return { label: 'JSON', load: () => import('@codemirror/lang-json').then(m => m.json()) }
+    case 'md': case 'mdx': return { label: 'Markdown', load: () => import('@codemirror/lang-markdown').then(m => m.markdown()) }
+    case 'rs': return { label: 'Rust', load: () => import('@codemirror/lang-rust').then(m => m.rust()) }
+    case 'py': return { label: 'Python', load: () => import('@codemirror/lang-python').then(m => m.python()) }
+    case 'sql': return { label: 'SQL', load: () => import('@codemirror/lang-sql').then(m => m.sql()) }
+    case 'yaml': case 'yml': return { label: 'YAML', load: () => import('@codemirror/lang-yaml').then(m => m.yaml()) }
+    case 'toml': return { label: 'TOML', load: legacy(tomlMode, 'toml') }
+    case 'lua': return { label: 'Lua', load: legacy(() => import('@codemirror/legacy-modes/mode/lua'), 'lua') }
+    case 'sh': case 'bash': case 'zsh': case 'fish': return { label: 'Shell', load: legacy(shellMode, 'shell') }
+    case 'ps1': return { label: 'PowerShell', load: legacy(() => import('@codemirror/legacy-modes/mode/powershell'), 'powerShell') }
+    case 'go': return { label: 'Go', load: legacy(() => import('@codemirror/legacy-modes/mode/go'), 'go') }
+    case 'c': case 'h': return { label: 'C', load: legacy(clike, 'c') }
+    case 'cpp': case 'hpp': case 'cc': return { label: 'C++', load: legacy(clike, 'cpp') }
+    case 'cs': return { label: 'C#', load: legacy(clike, 'csharp') }
+    case 'java': return { label: 'Java', load: legacy(clike, 'java') }
+    case 'kt': return { label: 'Kotlin', load: legacy(clike, 'kotlin') }
+    case 'swift': return { label: 'Swift', load: legacy(() => import('@codemirror/legacy-modes/mode/swift'), 'swift') }
+    case 'scala': return { label: 'Scala', load: legacy(clike, 'scala') }
+    case 'dart': return { label: 'Dart', load: legacy(clike, 'java') }
+    case 'zig': return { label: 'Zig', load: legacy(clike, 'cpp') }
+    case 'rb': return { label: 'Ruby', load: legacy(() => import('@codemirror/legacy-modes/mode/ruby'), 'ruby') }
+    case 'ex': case 'exs': return { label: 'Elixir', load: legacy(erlangMode, 'erlang') }
+    case 'erl': return { label: 'Erlang', load: legacy(erlangMode, 'erlang') }
+    case 'diff': return { label: 'Diff', load: legacy(() => import('@codemirror/legacy-modes/mode/diff'), 'diff') }
+    case 'ini': case 'cfg': case 'conf': case 'properties': case 'gitignore': return { label: 'Config', load: legacy(propsMode, 'properties') }
+    case 'env': return { label: '.env', load: legacy(propsMode, 'properties') }
+    case 'r': return { label: 'R', load: legacy(() => import('@codemirror/legacy-modes/mode/r'), 'r') }
+    case 'pl': return { label: 'Perl', load: legacy(() => import('@codemirror/legacy-modes/mode/perl'), 'perl') }
+    case 'hs': return { label: 'Haskell', load: legacy(() => import('@codemirror/legacy-modes/mode/haskell'), 'haskell') }
+    case 'clj': return { label: 'Clojure', load: legacy(erlangMode, 'erlang') }
+    case 'gradle': return { label: 'Gradle', load: legacy(() => import('@codemirror/legacy-modes/mode/groovy'), 'groovy') }
+    case 'nix': return { label: 'Nix' }
+    case 'php': return { label: 'PHP', load: legacy(clike, 'cpp') }
+    case 'bat': case 'cmd': return { label: 'Batch' }
+    case 'txt': case 'log': case 'csv': case 'rtf': return { label: 'Text', notepad: true }
+    default: return { label: ext ? ext.toUpperCase() : 'Text' }
   }
+}
+
+// one Language instance per grammar for the whole session: reopening a file
+// type reuses it instead of defining a fresh stream language
+const langCache = new Map<string, Promise<Extension>>()
+function loadLang(spec: LangSpec): Promise<Extension> {
+  if (!spec.load) return Promise.resolve([])
+  let p = langCache.get(spec.label)
+  if (!p) {
+    p = spec.load()
+    // a failed chunk (offline, stale deploy) retries on the next open
+    p.catch(() => langCache.delete(spec.label))
+    langCache.set(spec.label, p)
+  }
+  return p
+}
+
+function loadErrorMessage(e: any): string {
+  if (e?.status === 413) return 'This file is larger than the 5 MB editor limit. Download it instead.'
+  if (e?.status === 415) return "This file isn't UTF-8 text, so it can't be edited here."
+  return e?.message ?? 'Could not load the file.'
 }
 
 export default function TextEditor({
@@ -124,48 +135,91 @@ export default function TextEditor({
   onSaved: () => void
 }) {
   const { mode } = useThemeToggle()
-  const [content, setContent] = useState('')
-  const [loading, setLoading] = useState(true)
+  // null until the file has loaded; while null (or after a load error) there
+  // is nothing that could be saved back over the real file
+  const [doc, setDoc] = useState<string | null>(null)
+  const [loadError, setLoadError] = useState('')
   const [dirty, setDirty] = useState(false)
-  const [error, setError] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [saveError, setSaveError] = useState('')
   // editor defaults arrive from Settings (localStorage); the toolbar still
   // lets a session override them without touching the stored preference
-  const prefFont = Number(localStorage.getItem(PREFS.fontSize) ?? 14)
-  const [fontIdx, setFontIdx] = useState(Math.max(0, FONT_SIZES.indexOf(prefFont)))
+  const [fontIdx, setFontIdx] = useState(() =>
+    Math.max(0, FONT_SIZES.indexOf(Number(readPref(PREFS.fontSize) ?? 14))),
+  )
   const [confirmClose, setConfirmClose] = useState(false)
   const [notice, setNotice] = useState('')
-  const lang = langFor(name)
-  const prefWrap = (localStorage.getItem(PREFS.wrap) ?? 'on') === 'on'
-  const prefLineNums = (localStorage.getItem(PREFS.lineNumbers) ?? 'on') === 'on'
-  const [wrap, setWrap] = useState(lang.notepad ? true : prefWrap)
+  const lang = useMemo(() => langFor(name), [name])
+  const [langExt, setLangExt] = useState<Extension>([])
+  const [wrap, setWrap] = useState(() => (lang.notepad ? true : (readPref(PREFS.wrap) ?? 'on') === 'on'))
+  const [prefLineNums] = useState(() => (readPref(PREFS.lineNumbers) ?? 'on') === 'on')
+
+  // the live text lives in the editor; mirroring it into react state would
+  // re-render (and re-diff a multi-MB doc) on every keystroke
+  const docRef = useRef('')
+  const version = useRef(0)
+  const viewRef = useRef<EditorView | null>(null)
+  const loaded = doc !== null
 
   useEffect(() => {
+    let cancelled = false
+    setDoc(null)
+    setLoadError('')
     api
       .get(`/api/files/content?path=${encodeURIComponent(path)}`)
       .then(res => {
-        setContent(res.content)
-        setLoading(false)
+        if (cancelled) return
+        docRef.current = res.content
+        setDoc(res.content)
       })
       .catch(e => {
-        setError(e.message)
-        setLoading(false)
+        if (!cancelled) setLoadError(loadErrorMessage(e))
       })
+    return () => {
+      cancelled = true
+    }
   }, [path])
 
-  const save = async () => {
-    try {
-      const res = await fetch(`/api/files/content?path=${encodeURIComponent(path)}`, {
-        method: 'PUT',
-        body: content,
+  useEffect(() => {
+    let cancelled = false
+    loadLang(lang)
+      .then(ext => {
+        if (!cancelled) setLangExt(ext)
       })
-      if (!res.ok) {
-        const data = await res.json().catch(() => ({}))
-        throw new Error(data.error || `HTTP ${res.status}`)
-      }
-      setDirty(false)
+      // no grammar: the file still opens as plain text
+      .catch(() => {})
+    return () => {
+      cancelled = true
+    }
+  }, [lang])
+
+  // unsaved edits survive neither a tab close nor a reload: ask first
+  useEffect(() => {
+    if (!dirty) return
+    const onBeforeUnload = (e: BeforeUnloadEvent) => {
+      e.preventDefault()
+      e.returnValue = ''
+    }
+    window.addEventListener('beforeunload', onBeforeUnload)
+    return () => window.removeEventListener('beforeunload', onBeforeUnload)
+  }, [dirty])
+
+  const save = async () => {
+    if (!loaded || saving) return
+    const at = version.current
+    setSaving(true)
+    setSaveError('')
+    try {
+      await api.putText(`/api/files/content?path=${encodeURIComponent(path)}`, docRef.current)
+      // edits typed while the request was in flight keep the dirty marker
+      if (version.current === at) setDirty(false)
+      setNotice('Saved')
       onSaved()
     } catch (e: any) {
-      setError(e.message)
+      setSaveError(e.message)
+      setNotice(`Save failed: ${e.message}`)
+    } finally {
+      setSaving(false)
     }
   }
 
@@ -175,9 +229,11 @@ export default function TextEditor({
   // other languages simply don't get the button
   const canFormat = lang.label === 'JSON'
   const format = () => {
+    const view = viewRef.current
+    if (!view) return
     try {
-      setContent(JSON.stringify(JSON.parse(content), null, 2))
-      setDirty(true)
+      const pretty = JSON.stringify(JSON.parse(docRef.current), null, 2)
+      view.dispatch({ changes: { from: 0, to: view.state.doc.length, insert: pretty } })
       setNotice('Formatted')
     } catch (e: any) {
       setNotice(`cannot format: ${e.message}`)
@@ -188,39 +244,60 @@ export default function TextEditor({
   // the editor state on every keystroke
   const saveRef = useRef(save)
   saveRef.current = save
+
+  const onChange = useCallback((v: string) => {
+    docRef.current = v
+    version.current++
+    setDirty(true)
+  }, [])
+
+  // every prop below is memoized: @uiw/react-codemirror reconfigures the
+  // whole editor whenever one of them changes identity
+  const extensions = useMemo(
+    () => [
+      // light mode has no theme-provided colors; fall back to the classic
+      // highlight style so tokens are colored even before oneDark takes over
+      syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+      Prec.high(
+        keymap.of([
+          {
+            key: 'Mod-s',
+            run: () => {
+              saveRef.current()
+              return true
+            },
+          },
+        ]),
+      ),
+      langExt,
+      ...(wrap ? [EditorView.lineWrapping] : []),
+      EditorView.theme({
+        '&': { fontSize: `${FONT_SIZES[fontIdx]}px`, height: '100%' },
+        '.cm-editor': { height: '100%' },
+        '.cm-scroller': {
+          overflow: 'auto',
+          fontFamily: MONO,
+        },
+        '.cm-gutters': { fontFamily: MONO },
+      }),
+    ],
+    [langExt, wrap, fontIdx],
+  )
   // line numbers show on plain text only when the setting says so; source
   // files always keep them
-  const showLineNumbers = lang.notepad ? prefLineNums : true
-  const extensions = [
-    // light mode has no theme-provided colors; fall back to the classic
-    // highlight style so tokens are colored even before oneDark takes over
-    syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
-    Prec.high(
-      keymap.of([
-        {
-          key: 'Mod-s',
-          run: () => {
-            saveRef.current()
-            return true
-          },
-        },
-      ]),
-    ),
-    ...lang.code,
-    ...(wrap ? [EditorView.lineWrapping] : []),
-    EditorView.theme({
-      '&': { fontSize: `${FONT_SIZES[fontIdx]}px`, height: '100%' },
-      '.cm-editor': { height: '100%' },
-      '.cm-scroller': {
-        overflow: 'auto',
-        fontFamily: MONO,
-      },
-      '.cm-gutters': { fontFamily: MONO },
+  const basicSetup = useMemo(
+    () => ({
+      highlightActiveLine: !lang.notepad,
+      foldGutter: !lang.notepad,
+      lineNumbers: lang.notepad ? prefLineNums : true,
+      // completion popups from words in the buffer are noise in a file manager
+      autocompletion: false,
     }),
-  ]
+    [lang.notepad, prefLineNums],
+  )
 
   return (
-    <Dialog open fullScreen onClose={requestClose}>
+    <Dialog open fullScreen onClose={requestClose} aria-label={`Edit ${name}`}>
       <Box
         sx={{
           display: 'flex',
@@ -241,6 +318,7 @@ export default function TextEditor({
         <Chip label={lang.label} size="small" variant="outlined" sx={{ borderRadius: 1 }} />
         <Tooltip title={dirty ? 'Unsaved changes' : ''}>
           <Box
+            aria-label={dirty ? 'Unsaved changes' : undefined}
             sx={{
               width: 8,
               height: 8,
@@ -251,15 +329,17 @@ export default function TextEditor({
           />
         </Tooltip>
         <Box sx={{ flex: 1 }} />
-        {canFormat && (
+        {canFormat && loaded && (
           <Tooltip title="Format (pretty-print JSON)">
-            <IconButton size="small" onClick={format}>
+            <IconButton aria-label="Format JSON" size="small" onClick={format}>
               <FormatAlignLeft fontSize="small" />
             </IconButton>
           </Tooltip>
         )}
         <Tooltip title={wrap ? 'Word wrap: on' : 'Word wrap: off'}>
           <IconButton
+            aria-label="Toggle word wrap"
+            aria-pressed={wrap}
             size="small"
             onClick={() => setWrap(w => !w)}
             sx={{
@@ -271,15 +351,15 @@ export default function TextEditor({
           </IconButton>
         </Tooltip>
         <Tooltip title={`Font size: ${FONT_SIZES[fontIdx]}px`}>
-          <IconButton size="small" onClick={() => setFontIdx(i => (i + 1) % FONT_SIZES.length)}>
+          <IconButton aria-label="Change font size" size="small" onClick={() => setFontIdx(i => (i + 1) % FONT_SIZES.length)}>
             <TextFields fontSize="small" />
           </IconButton>
         </Tooltip>
-        <Button variant="contained" startIcon={<Save />} disabled={!dirty || loading} onClick={save}>
+        <Button variant="contained" startIcon={<Save />} disabled={!dirty || !loaded || saving} onClick={save}>
           Save
         </Button>
         <Tooltip title="Close">
-          <IconButton size="small" onClick={requestClose}>
+          <IconButton aria-label="Close editor" size="small" onClick={requestClose}>
             <CloseIcon fontSize="small" />
           </IconButton>
         </Tooltip>
@@ -294,30 +374,41 @@ export default function TextEditor({
           p: 0,
         }}
       >
-        {error && (
-          <Typography variant="caption" color="error" sx={{ px: 2, pt: 1 }}>
-            {error}
+        {saveError && (
+          <Typography variant="caption" color="error" role="alert" sx={{ px: 2, pt: 1 }}>
+            {saveError}
           </Typography>
         )}
-        {loading ? (
-          <CircularProgress size={24} sx={{ m: 'auto' }} />
+        {loadError ? (
+          <Box role="alert" sx={{ m: 'auto', p: 3, textAlign: 'center', maxWidth: 420 }}>
+            <Typography variant="subtitle1" fontWeight={600} sx={{ mb: 0.5 }}>
+              Can't open "{name}"
+            </Typography>
+            <Typography variant="body2" color="text.secondary" sx={{ mb: 2 }}>
+              {loadError}
+            </Typography>
+            <Button variant="outlined" onClick={onClose}>Close</Button>
+          </Box>
+        ) : !loaded ? (
+          <CircularProgress size={24} sx={{ m: 'auto' }} aria-label="Loading file" />
         ) : (
           <Box sx={{ flex: 1, minHeight: 0 }}>
             <CodeMirror
-              value={content}
+              value={doc}
               extensions={extensions}
               theme={mode === 'dark' ? oneDark : 'light'}
               height="100%"
               style={{ height: '100%' }}
-              basicSetup={{
-                highlightActiveLine: !lang.notepad,
-                foldGutter: !lang.notepad,
-                lineNumbers: showLineNumbers,
+              basicSetup={basicSetup}
+              // the file is ready to type into the moment it opens. this also
+              // pulls focus back from a closing dialog (the "new file" prompt
+              // restores focus to its trigger), so Escape closes the editor
+              autoFocus
+              onCreateEditor={view => {
+                viewRef.current = view
+                requestAnimationFrame(() => view.focus())
               }}
-              onChange={v => {
-                setContent(v)
-                setDirty(true)
-              }}
+              onChange={onChange}
             />
           </Box>
         )}

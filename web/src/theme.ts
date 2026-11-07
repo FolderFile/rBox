@@ -121,6 +121,20 @@ function shared(shadow: { bar: string; card: string }): any {
     MuiTable: { defaultProps: { size: 'small' as const } },
     MuiTextField: { defaultProps: { size: 'small' as const, variant: 'outlined' as const } },
     MuiButtonBase: { styleOverrides: { root: { borderRadius: 4 } } },
+    // a neutral track: MUI's default tints it with the bar color, which makes
+    // a 1% meter look full at a glance
+    MuiLinearProgress: {
+      styleOverrides: {
+        root: ({ theme }: any) => ({
+          backgroundColor: theme.palette.mode === 'dark' ? 'rgba(148, 163, 184, 0.16)' : 'rgba(15, 23, 42, 0.08)',
+        }),
+        bar: { borderRadius: 'inherit' },
+      },
+    },
+    MuiTooltip: {
+      defaultProps: { enterDelay: 400, enterNextDelay: 150 },
+      styleOverrides: { tooltip: { fontSize: '0.75rem', fontWeight: 500 } },
+    },
   }
 }
 

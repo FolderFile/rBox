@@ -6,7 +6,7 @@ const USER = process.argv[4] || 'admin'
 const PASS = process.argv[5] || 'secret123'
 
 let pass = 0, fail = 0
-const ok = m => console.log(`  ok: ${m}`) && pass++
+const ok = m => { console.log(`  ok: ${m}`); pass++ }
 const check = (m, c) => { if (c) { ok(m) } else { console.log(`  FAIL: ${m}`); fail++ } }
 
 async function box(page, sel) {
@@ -39,8 +39,13 @@ async function login(page) {
     const logo = await fetch(BASE + '/logo.png')
     check('logo.png served', logo.ok && (logo.headers.get('content-type') || '').includes('png'))
     const html = await (await fetch(BASE + '/')).text()
-    check('index links Inter font', html.includes('family=Inter'))
-    check('index links JetBrains Mono', html.includes('JetBrains+Mono'))
+    // fonts ship inside the binary: no third-party request, works offline
+    check('index makes no google fonts request', !html.includes('fonts.googleapis.com'))
+    const css = html.match(/\/assets\/[^"]+\.css/)
+    const cssText = css ? await (await fetch(BASE + css[0])).text() : ''
+    check('bundled css declares Inter', cssText.includes('Inter'))
+    const woff = cssText.match(/\/assets\/inter-latin-wght[^)]+\.woff2/)
+    check('Inter woff2 served from the binary', !!woff && (await fetch(BASE + woff[0])).ok)
   }
 
   const page = await browser.newPage({ viewport: { width: 1366, height: 768 } })
@@ -102,7 +107,7 @@ async function login(page) {
   await page.waitForSelector('text=seed.txt', { timeout: 10000 })
 
   // move seed.txt into Images via the picker
-  await page.locator('tr:has-text("seed.txt") button[aria-label="More"]').click()
+  await page.locator('tr:has-text("seed.txt") button[aria-label^="More actions for"]').click()
   await page.click('text=Move to...')
   await page.waitForSelector('div[role="dialog"] >> text=Images', { timeout: 5000 })
   check('picker lists default folders', (await page.locator('div[role="dialog"] >> text=Documents').count()) > 0)
@@ -127,12 +132,15 @@ async function login(page) {
   // ---------- lua file: code badge + editor highlighting ----------
   await page.locator('nav >> text=All Files').first().click()
   await page.waitForTimeout(400)
-  await page.click('button[aria-label="New file"]')
+  await page.click('button[aria-haspopup="menu"]:has-text("New")')
+  await page.click('li[role="menuitem"]:has-text("Text file")')
   await page.fill('div[role="dialog"] input', 'hello.lua')
   await page.keyboard.press('Enter')
-  await page.waitForTimeout(600)
-  await page.keyboard.press('Escape') // editor opens directly; close it
-  await page.waitForTimeout(400)
+  // the editor opens directly (lazy chunk + grammar); close it once it's up
+  await page.waitForSelector('.cm-editor', { timeout: 20000 })
+  await page.keyboard.press('Escape')
+  await page.waitForSelector('.cm-editor', { state: 'detached', timeout: 10000 })
+  await page.waitForTimeout(300)
   const luaRow = page.locator('tr:has-text("hello.lua")')
   check('hello.lua appears in listing', (await luaRow.count()) > 0)
   const badgeColor = await luaRow.first().evaluate(el => {
@@ -170,7 +178,7 @@ async function login(page) {
   check('dark canvas is obsidian #050609', /rgb\(5, 6, 9\)/.test(bodyBg))
 
   // ---------- settings view ----------
-  await page.locator('button[aria-label="Settings"]').first().click()
+  await page.locator('nav >> text=Settings').first().click()
   await page.waitForSelector('text=Storage & Quota', { timeout: 5000 })
   for (const section of ['Storage & Quota', 'Preferences & Appearance', 'Account Security', 'Active Sessions']) {
     check(`settings shows "${section}"`, (await page.locator(`text=${section}`).count()) > 0)
@@ -202,7 +210,7 @@ async function login(page) {
   // ---------- shares lifecycle: delete unshares ----------
   await page.locator('nav >> text=Code').first().click()
   await page.waitForSelector('tr:has-text("hello.lua")', { timeout: 5000 })
-  await page.locator('tr:has-text("hello.lua") button[aria-label="More"]').click()
+  await page.locator('tr:has-text("hello.lua") button[aria-label^="More actions for"]').click()
   await page.click('text=Share...')
   await page.click('button:has-text("Create Share Link")')
   await page.waitForSelector('button:has-text("Copy Link")', { timeout: 5000 })

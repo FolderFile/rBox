@@ -77,7 +77,8 @@ await phone.close()
 await phone.close()
 
 // -- create folder, upload, browse, edit -----------------------------------
-await page.click('button[aria-label="New folder"]')
+await page.click('button[aria-haspopup="menu"]:has-text("New")')
+await page.click('li[role="menuitem"]:has-text("Folder")')
 await page.fill('div[role="dialog"] input', 'smoke-folder')
 await page.keyboard.press('Enter')
 await page.waitForSelector('text=smoke-folder', { timeout: 10000 })
@@ -125,7 +126,7 @@ await page.waitForSelector('tr:has-text("notes.md")', { timeout: 10000 })
 // -- share modal: both links ------------------------------------------------
 // the row's last icon button is the more (⋮) menu; data-testid is stripped
 // in production builds so select by position
-await page.locator('tr:has-text("notes.md") button[aria-label="More"]').click()
+await page.locator('tr:has-text("notes.md") button[aria-label^="More actions for"]').click()
 await page.waitForSelector('text=Share...', { timeout: 5000 })
 await page.click('text=Share...')
 await page.waitForSelector('text=Create Share Link', { timeout: 5000 })
@@ -139,7 +140,7 @@ await page.click('button:has-text("Done")')
 ok('share modal with normal + raw links')
 
 // -- archive create + inspect + extract -------------------------------------
-await page.locator('tr:has-text("smoke-folder") button[aria-label="More"]').click()
+await page.locator('tr:has-text("smoke-folder") button[aria-label^="More actions for"]').click()
 await page.click('text=Archive...')
 await page.waitForSelector('text=Create Archive', { timeout: 5000 })
 await page.locator('div[role="dialog"] button:has-text("Create")').click()
@@ -158,10 +159,12 @@ await page.keyboard.press('Escape')
 const pub = await browser.newPage()
 watch(pub)
 await pub.goto(shareUrl, { waitUntil: 'networkidle' })
+// the landing page is its own lazy chunk: wait for it, isVisible() doesn't
 const landing = await pub
-  .locator('text=Download')
+  .locator('button:has-text("Download")')
   .first()
-  .isVisible({ timeout: 10000 })
+  .waitFor({ state: 'visible', timeout: 10000 })
+  .then(() => true)
   .catch(() => false)
 check('public share landing renders for visitors', landing)
 await pub.close()

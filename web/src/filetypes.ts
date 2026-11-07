@@ -42,6 +42,33 @@ export function kindOf(name: string, isDir = false): FileKind {
   return 'other'
 }
 
+// what the in-browser lightbox can actually play; lives here (not in
+// Lightbox.tsx) so the explorer can decide without loading the viewer chunk
+export const PREVIEW_IMAGE = ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp', 'svg']
+export const PREVIEW_VIDEO = ['mp4', 'webm', 'mov']
+export const PREVIEW_AUDIO = ['mp3', 'flac', 'wav', 'ogg', 'm4a']
+
+export function isImage(e: { name: string }): boolean {
+  return PREVIEW_IMAGE.includes(extOf(e.name))
+}
+
+export function isMedia(e: { name: string }): boolean {
+  const ext = extOf(e.name)
+  return PREVIEW_IMAGE.includes(ext) || PREVIEW_VIDEO.includes(ext) || PREVIEW_AUDIO.includes(ext)
+}
+
+// exactly the formats the backend can list and extract (archive.rs
+// open_format); a bare .gz/.7z is a plain download, not a viewer
+const ARCHIVE_RE = /\.(zip|tar|tgz|tar\.gz|tar\.zst|tar\.xz)$/i
+
+export function isArchiveName(name: string): boolean {
+  return ARCHIVE_RE.test(name)
+}
+
+export function stripArchiveExt(name: string): string {
+  return name.replace(ARCHIVE_RE, '')
+}
+
 // editable = anything we can open in the text/code editor
 const TEXT_EXTS = new Set([...CODE, ...DOC, 'md'])
 
@@ -94,3 +121,28 @@ export const FOLDER_VISUALS: Record<string, { color: string; bg: string; icon: s
 }
 
 export const FOLDER_DEFAULT = { color: '#f59e0b', bg: 'rgba(245, 158, 11, 0.14)', icon: 'folder' }
+
+const KIND_NAMES: Record<string, string> = {
+  pdf: 'PDF document', csv: 'CSV spreadsheet', tsv: 'TSV spreadsheet', xls: 'Excel spreadsheet',
+  xlsx: 'Excel spreadsheet', ods: 'Spreadsheet', ppt: 'PowerPoint deck', pptx: 'PowerPoint deck',
+  odp: 'Presentation', doc: 'Word document', docx: 'Word document', odt: 'Document',
+  rtf: 'Rich text', txt: 'Plain text', md: 'Markdown', mdx: 'MDX', log: 'Log file',
+  json: 'JSON', yaml: 'YAML', yml: 'YAML', toml: 'TOML', rs: 'Rust source', ts: 'TypeScript',
+  tsx: 'TypeScript JSX', js: 'JavaScript', jsx: 'JavaScript JSX', py: 'Python source',
+  go: 'Go source', sh: 'Shell script', html: 'HTML', css: 'Stylesheet', sql: 'SQL',
+  zip: 'ZIP archive', tar: 'Tar archive', gz: 'Gzip archive', tgz: 'Tar archive',
+  zst: 'Zstd archive', xz: 'XZ archive', '7z': '7-Zip archive', rar: 'RAR archive',
+}
+
+/** "PDF document", "PNG image", "Folder": the Kind column on wide screens */
+export function kindLabel(e: { name: string; is_dir: boolean }): string {
+  if (e.is_dir) return 'Folder'
+  const ext = extOf(e.name)
+  if (!e.name.includes('.') || !ext) return 'File'
+  if (KIND_NAMES[ext]) return KIND_NAMES[ext]
+  const kind = kindOf(e.name)
+  const noun = kind === 'image' ? 'image' : kind === 'video' ? 'video' : kind === 'audio' ? 'audio'
+    : kind === 'code' ? 'source' : 'file'
+  return `${ext.toUpperCase()} ${noun}`
+}
+

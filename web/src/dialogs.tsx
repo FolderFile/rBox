@@ -6,7 +6,7 @@ import OpenInNew from '@mui/icons-material/OpenInNew'
 import HomeRounded from '@mui/icons-material/HomeRounded'
 import CreateNewFolderRounded from '@mui/icons-material/CreateNewFolderRounded'
 import ArrowUpwardRounded from '@mui/icons-material/ArrowUpwardRounded'
-import { api, Entry, joinPath } from './api'
+import { api, copyText, Entry, joinPath } from './api'
 import { FileBadge } from './fileicons'
 
 // one dialog shape for every simple single-value prompt (mkdir, rename,
@@ -18,13 +18,28 @@ export function PromptDialog(props: {
   confirmLabel?: string
   open: boolean
   onCancel: () => void
-  onSubmit: (value: string) => void
+  // a rejected promise keeps the dialog open and shows the message inline
+  onSubmit: (value: string) => void | Promise<unknown>
 }) {
   const [value, setValue] = useState(props.initial ?? '')
   const [err, setErr] = useState('')
-  const submit = () => {
-    if (value.includes('..')) return setErr("'..' is not allowed")
-    props.onSubmit(value)
+  const [busy, setBusy] = useState(false)
+  const submit = async () => {
+    if (busy) return
+    const name = value.trim()
+    if (!name) return setErr('Name cannot be empty')
+    if (/[/\\]/.test(name)) return setErr('Name cannot contain / or \\')
+    if (name === '.' || name === '..') return setErr(`'${name}' is not allowed`)
+    if (name === props.initial) return props.onCancel()
+    setErr('')
+    setBusy(true)
+    try {
+      await props.onSubmit(name)
+    } catch (e: any) {
+      setErr(e?.message ?? String(e))
+    } finally {
+      setBusy(false)
+    }
   }
   return (
     <Dialog
@@ -36,21 +51,28 @@ export function PromptDialog(props: {
       <DialogTitle>{props.title}</DialogTitle>
       <DialogContent>
         <Stack spacing={2} sx={{ pt: 1 }}>
-          {err && <DialogContentText color="error">{err}</DialogContentText>}
+          {err && <DialogContentText color="error" role="alert">{err}</DialogContentText>}
           <TextField
             autoFocus
+            label={props.label}
             value={value}
             onChange={e => setValue(e.target.value)}
             error={!!err}
-            onKeyUp={e => e.key === 'Enter' && submit()}
-            onKeyDown={e => e.key === 'Enter' && e.preventDefault()}
+            // keydown, not keyup: a dialog opened with Enter would otherwise
+            // receive that key's release and submit at once. IME composition
+            // uses Enter to confirm a candidate, which must not submit either
+            onKeyDown={e => {
+              if (e.key !== 'Enter' || e.nativeEvent.isComposing) return
+              e.preventDefault()
+              submit()
+            }}
             fullWidth
           />
         </Stack>
       </DialogContent>
       <DialogActions>
         <Button onClick={props.onCancel}>Cancel</Button>
-        <Button variant="contained" onClick={submit}>
+        <Button variant="contained" onClick={submit} disabled={busy}>
           {props.confirmLabel ?? 'OK'}
         </Button>
       </DialogActions>
@@ -79,6 +101,7 @@ export function ShareDialog(props: {
   const [busy, setBusy] = useState(false)
   const [copied, setCopied] = useState<'' | 'normal' | 'raw'>('')
   const [error, setError] = useState('')
+  const [copyFailed, setCopyFailed] = useState(false)
   const urlField = useRef<HTMLInputElement>(null)
   const rawField = useRef<HTMLInputElement>(null)
 
@@ -99,8 +122,15 @@ export function ShareDialog(props: {
   const copy = async (which: 'normal' | 'raw', text: string) => {
     // clipboard api can be blocked on mobile; the read-only fields still
     // support tap-select and long-press copy
-    const ok = await navigator.clipboard.writeText(text).then(() => true).catch(() => false)
-    if (!ok) (which === 'normal' ? urlField : rawField).current?.select()
+    const ok = await copyText(text)
+    if (!ok) {
+      const field = (which === 'normal' ? urlField : rawField).current
+      field?.focus()
+      field?.select()
+      setCopyFailed(true)
+      return
+    }
+    setCopyFailed(false)
     setCopied(which)
     setTimeout(() => setCopied(''), 2000)
   }
@@ -125,7 +155,7 @@ export function ShareDialog(props: {
                 sx: { fontFamily: '"JetBrains Mono", monospace', fontSize: '0.8rem' },
                 endAdornment: (
                   <InputAdornment position="end">
-                    <IconButton size="small" onClick={() => copy('normal', url)}>
+                    <IconButton aria-label="Copy preview link" size="small" onClick={() => copy('normal', url)}>
                       {copied === 'normal'
                         ? <CheckIcon color="success" fontSize="small" />
                         : <ContentCopy fontSize="small" />}
@@ -148,7 +178,7 @@ export function ShareDialog(props: {
                 sx: { fontFamily: '"JetBrains Mono", monospace', fontSize: '0.8rem' },
                 endAdornment: (
                   <InputAdornment position="end">
-                    <IconButton size="small" onClick={() => copy('raw', rawUrl)}>
+                    <IconButton aria-label="Copy raw link" size="small" onClick={() => copy('raw', rawUrl)}>
                       {copied === 'raw'
                         ? <CheckIcon color="success" fontSize="small" />
                         : <ContentCopy fontSize="small" />}
@@ -157,6 +187,11 @@ export function ShareDialog(props: {
                 ),
               }}
             />
+            {copyFailed && (
+              <Typography variant="caption" color="warning.main" role="status">
+                Copying is blocked here. The link is selected: press Ctrl+C (or long-press) to copy it.
+              </Typography>
+            )}
           </Stack>
         ) : (
           <Stack spacing={2} sx={{ pt: 1 }}>
@@ -409,10 +444,11 @@ export function DestinationPicker(props: {
           label="Folder name"
           open
           onCancel={() => setMkOpen(false)}
-          onSubmit={name => {
-            api.post('/api/files/mkdir', { path: joinPath(dir, name) })
-              .catch(() => {})
-              .then(() => { setMkOpen(false); load(dir) })
+          onSubmit={async name => {
+            // failures (409 name clash, bad name) surface inside the prompt
+            await api.post('/api/files/mkdir', { path: joinPath(dir, name) })
+            setMkOpen(false)
+            goTo(joinPath(dir, name))
           }}
           confirmLabel="Create"
         />

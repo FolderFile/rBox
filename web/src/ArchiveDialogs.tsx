@@ -8,7 +8,8 @@ import LockRounded from '@mui/icons-material/LockRounded'
 import Visibility from '@mui/icons-material/Visibility'
 import VisibilityOff from '@mui/icons-material/VisibilityOff'
 import FolderRounded from '@mui/icons-material/FolderRounded'
-import { api, ArchiveEntryInfo, fmtSize } from './api'
+import { api, ArchiveEntryInfo, fmtSize, joinPath } from './api'
+import { stripArchiveExt } from './filetypes'
 
 const FORMATS = ['zip', 'tar.gz', 'tar.zst', 'tar.xz', 'tar']
 const LEVELS = [
@@ -18,24 +19,24 @@ const LEVELS = [
   { label: 'Ultra', hint: 'Max compression', value: 9 },
 ]
 
-export function isArchiveName(name: string): boolean {
-  return /\.(zip|tar|tgz|gz|zst|xz|7z)$/i.test(name)
-}
-
 export function CreateArchiveDialog({
+  dir,
   paths,
   suggestedName,
   open,
   onCancel,
   onCreated,
 }: {
+  // folder the archive is written into (relative to the vault root)
+  dir: string
   paths: string[]
   suggestedName: string
   open: boolean
   onCancel: () => void
   onCreated: (path: string) => void
 }) {
-  const [name, setName] = useState(suggestedName)
+  // only the base name is editable; the extension follows the format
+  const [base, setBase] = useState(stripArchiveExt(suggestedName))
   const [format, setFormat] = useState('zip')
   const [level, setLevel] = useState(6)
   const [password, setPassword] = useState('')
@@ -45,7 +46,7 @@ export function CreateArchiveDialog({
 
   useEffect(() => {
     if (open) {
-      setName(suggestedName)
+      setBase(stripArchiveExt(suggestedName))
       setFormat('zip')
       setLevel(6)
       setPassword('')
@@ -53,18 +54,17 @@ export function CreateArchiveDialog({
     }
   }, [open, suggestedName])
 
-  // keep the extension in sync with the chosen format
-  const ext = format === 'tar' ? '.tar' : `.${format}`
-  const base = name.replace(/\.(zip|tar\.gz|tgz|tar\.zst|tar\.xz|tar)$/i, '')
-  const fileName = base + ext
+  const ext = `.${format}`
+  const fileName = base.trim() + ext
 
   const create = async () => {
+    if (/[/\\]/.test(base)) return setError('Name cannot contain / or \\')
     setBusy(true)
     setError('')
     try {
       await api.post('/api/files/archive', {
         paths,
-        dest_path: fileName,
+        dest_path: joinPath(dir, fileName),
         format,
         level,
         password: format === 'zip' && password ? password : undefined,
@@ -85,8 +85,15 @@ export function CreateArchiveDialog({
           {error && <Alert severity="error">{error}</Alert>}
           <TextField
             label="Archive filename"
-            value={fileName}
-            onChange={e => setName(base + e.target.value.slice(base.length))}
+            value={base}
+            onChange={e => setBase(e.target.value)}
+            onKeyDown={e => {
+              if (e.key === 'Enter' && !e.nativeEvent.isComposing && base.trim() && !busy) create()
+            }}
+            slotProps={{
+              input: { endAdornment: <InputAdornment position="end">{ext}</InputAdornment> },
+            }}
+            helperText={`Saved in /${dir || 'Home'}`}
             fullWidth
           />
           <TextField
@@ -128,7 +135,11 @@ export function CreateArchiveDialog({
                 input: {
                   endAdornment: (
                     <InputAdornment position="end">
-                      <IconButton size="small" onClick={() => setShowPw(s => !s)}>
+                      <IconButton
+                        aria-label={showPw ? 'Hide password' : 'Show password'}
+                        size="small"
+                        onClick={() => setShowPw(s => !s)}
+                      >
                         {showPw ? <VisibilityOff fontSize="small" /> : <Visibility fontSize="small" />}
                       </IconButton>
                     </InputAdornment>
@@ -142,7 +153,7 @@ export function CreateArchiveDialog({
       </DialogContent>
       <DialogActions>
         <Button onClick={onCancel}>Cancel</Button>
-        <Button variant="contained" disabled={busy || !base} onClick={create}>
+        <Button variant="contained" disabled={busy || !base.trim()} onClick={create}>
           Create
         </Button>
       </DialogActions>
@@ -186,7 +197,7 @@ export function ArchiveViewerDialog({
   const [pwError, setPwError] = useState('')
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
-  const [dest, setDest] = useState(path.replace(/\.(zip|tar|tgz|gz|zst|xz|7z)$/i, ''))
+  const [dest, setDest] = useState(stripArchiveExt(path))
 
   const loadList = async (pw?: string) => {
     setBusy(true)
@@ -208,7 +219,7 @@ export function ArchiveViewerDialog({
       setPassword('')
       setNeedPassword(false)
       setPwError('')
-      setDest(path.replace(/\.(zip|tar|tgz|gz|zst|xz|7z)$/i, ''))
+      setDest(stripArchiveExt(path))
       loadList()
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps

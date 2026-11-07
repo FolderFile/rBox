@@ -1,7 +1,16 @@
+// fonts ship with the app: no third-party request, works on offline LANs
+import './fonts.css'
 import React from 'react'
 import ReactDOM from 'react-dom/client'
 import { Box, Button, Card, CardContent, Stack, Typography } from '@mui/material'
 import App from './App'
+import { reloadOnce } from './lazy'
+
+// a stale tab (opened before a deploy) asking for a retired chunk: reload
+// once into the new build instead of crashing into the error card
+window.addEventListener('vite:preloadError', e => {
+  if (reloadOnce()) e.preventDefault()
+})
 
 // a crashing render must never leave a blank white page: catch it here and
 // offer a recovery card instead
@@ -22,8 +31,12 @@ class ErrorBoundary extends React.Component<
   render() {
     if (!this.state.error) return this.props.children
     const reset = () => {
-      localStorage.clear()
-      sessionStorage.clear()
+      try {
+        localStorage.clear()
+        sessionStorage.clear()
+      } catch {
+        // storage blocked: a plain reload is all we can do
+      }
       location.reload()
     }
     return (

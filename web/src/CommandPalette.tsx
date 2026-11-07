@@ -1,12 +1,12 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useState } from 'react'
 import {
   Box, CircularProgress, Dialog, DialogContent, InputBase, ListItemButton,
   ListItemIcon, ListItemText, Typography, keyframes,
 } from '@mui/material'
 import SearchRounded from '@mui/icons-material/SearchRounded'
 import FolderRounded from '@mui/icons-material/FolderRounded'
-import InsertDriveFileRounded from '@mui/icons-material/InsertDriveFileRounded'
 import { api, fmtSize, SearchHit } from './api'
+import { EntryIcon } from './fileicons'
 
 const pop = keyframes`
   from { opacity: 0; transform: translateY(8px) scale(0.98); }
@@ -27,33 +27,49 @@ export function CommandPalette({
   const [q, setQ] = useState('')
   const [hits, setHits] = useState<SearchHit[] | null>(null)
   const [active, setActive] = useState(0)
-  const timer = useRef<number>(0)
+  const [searching, setSearching] = useState(false)
+  const [searchError, setSearchError] = useState('')
 
   useEffect(() => {
     if (!open) {
       setQ('')
       setHits(null)
       setActive(0)
+      setSearchError('')
     }
   }, [open])
 
+  // each keystroke cancels both the pending debounce and any request still
+  // in flight, so a slow search for "rep" can never overwrite "report"
   useEffect(() => {
     if (!open) return
-    window.clearTimeout(timer.current)
-    if (!q.trim()) {
+    const term = q.trim()
+    if (!term) {
       setHits(null)
+      setSearching(false)
+      setSearchError('')
       return
     }
-    timer.current = window.setTimeout(async () => {
+    const ctrl = new AbortController()
+    setSearching(true)
+    const timer = window.setTimeout(async () => {
       try {
-        const res = await api.get(`/api/files/search?q=${encodeURIComponent(q.trim())}`)
+        const res = await api.get(`/api/files/search?q=${encodeURIComponent(term)}`, ctrl.signal)
         setHits(res.results.slice(0, 12))
         setActive(0)
-      } catch {
+        setSearchError('')
+      } catch (e: any) {
+        if (ctrl.signal.aborted) return
         setHits([])
+        setSearchError(e.message)
+      } finally {
+        if (!ctrl.signal.aborted) setSearching(false)
       }
     }, 180)
-    return () => window.clearTimeout(timer.current)
+    return () => {
+      window.clearTimeout(timer)
+      ctrl.abort()
+    }
   }, [q, open])
 
   const pick = (hit: SearchHit) => {
@@ -99,9 +115,10 @@ export function CommandPalette({
             value={q}
             onChange={e => setQ(e.target.value)}
             onKeyDown={onKey}
+            inputProps={{ 'aria-label': 'Search files' }}
             sx={{ fontSize: '0.95rem' }}
           />
-          {hits === null && q.trim() && <CircularProgress size={18} />}
+          {searching && <CircularProgress size={18} aria-label="Searching" />}
         </Box>
         <Box sx={{ maxHeight: 420, overflowY: 'auto', animation: `${pop} 150ms cubic-bezier(0.2, 0, 0, 1)` }}>
           {hits?.map((hit, i) => (
@@ -111,7 +128,7 @@ export function CommandPalette({
               onClick={() => pick(hit)}
             >
               <ListItemIcon sx={{ minWidth: 36 }}>
-                {hit.is_dir ? <FolderRounded /> : <InsertDriveFileRounded />}
+                <EntryIcon entry={hit} size={22} />
               </ListItemIcon>
               <ListItemText
                 primary={hit.name}
@@ -123,9 +140,9 @@ export function CommandPalette({
               </Typography>
             </ListItemButton>
           ))}
-          {hits?.length === 0 && q.trim() && (
-            <Typography variant="body2" color="text.secondary" sx={{ px: 3, py: 3 }}>
-              Nothing in your vault matches "{q}".
+          {hits?.length === 0 && q.trim() && !searching && (
+            <Typography variant="body2" color={searchError ? 'error' : 'text.secondary'} sx={{ px: 3, py: 3 }}>
+              {searchError ? `Search failed: ${searchError}` : `Nothing in your vault matches "${q}".`}
             </Typography>
           )}
           {hits === null && (

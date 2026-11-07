@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react'
 import {
-  Box, Button, Card, CardContent, Chip, IconButton, Link, Paper, Snackbar,
+  Alert, Box, Button, Card, CardContent, Chip, IconButton, Link, Paper, Snackbar,
   Stack, Table, TableBody, TableCell, TableContainer, TableHead, TableRow,
   Tooltip, Typography, useMediaQuery, useTheme,
 } from '@mui/material'
@@ -9,7 +9,7 @@ import AttachFile from '@mui/icons-material/AttachFile'
 import DeleteOutline from '@mui/icons-material/DeleteOutline'
 import LockOutlined from '@mui/icons-material/LockOutlined'
 import ScheduleRounded from '@mui/icons-material/ScheduleRounded'
-import { api, baseName, fmtDate, ShareRow } from './api'
+import { api, baseName, copyText, fmtDate, fmtRelative, ShareRow } from './api'
 import { ConfirmDialog } from './dialogs'
 import { FileBadge } from './fileicons'
 
@@ -19,13 +19,18 @@ export default function Shares() {
   const [shares, setShares] = useState<ShareRow[]>([])
   const [snack, setSnack] = useState('')
   const [pending, setPending] = useState<ShareRow | null>(null)
+  const [loaded, setLoaded] = useState(false)
+  const [error, setError] = useState('')
 
   const load = useCallback(async () => {
     try {
       const res = await api.get('/api/shares')
       setShares(res.shares)
-    } catch {
-      setShares([])
+      setError('')
+    } catch (e: any) {
+      setError(e.message)
+    } finally {
+      setLoaded(true)
     }
   }, [])
 
@@ -33,17 +38,15 @@ export default function Shares() {
     load()
   }, [load])
 
-  const copy = async (token: string) => {
-    const url = `${location.origin}/s/${token}`
-    await navigator.clipboard.writeText(url).catch(() => {})
-    setSnack('Link copied to clipboard')
+  const copyUrl = async (url: string, what: string) => {
+    const ok = await copyText(url)
+    setSnack(ok ? `${what} copied to clipboard` : `Copying is blocked here. Link: ${url}`)
   }
-
-  const copyRaw = async (s: ShareRow) => {
-    const url = `${location.origin}/s/${s.token}/raw/${encodeURIComponent(baseName(s.path))}`
-    await navigator.clipboard.writeText(url).catch(() => {})
-    setSnack('Raw link copied to clipboard')
-  }
+  const copy = (token: string) => copyUrl(`${location.origin}/s/${token}`, 'Link')
+  const copyRaw = (s: ShareRow) =>
+    copyUrl(`${location.origin}/s/${s.token}/raw/${encodeURIComponent(baseName(s.path))}`, 'Raw link')
+  // the empty hint only once we know the list is really empty
+  const empty = loaded && !error && shares.length === 0
 
   const revoke = async (s: ShareRow) => {
     try {
@@ -59,14 +62,18 @@ export default function Shares() {
   const expiryChip = (s: ShareRow) => {
     if (!s.expires_at) return <Chip size="small" label="Never expires" sx={{ borderRadius: 1, height: 22 }} />
     const expired = s.expires_at * 1000 < Date.now()
+    // within a day reads as urgent; the exact moment lives in the tooltip
+    const soon = !expired && s.expires_at * 1000 - Date.now() < 86400000
     return (
-      <Chip
-        size="small"
-        icon={<ScheduleRounded />}
-        label={expired ? 'Expired' : `Expires ${fmtDate(s.expires_at)}`}
-        color={expired ? 'error' : 'default'}
-        sx={{ borderRadius: 1, height: 22 }}
-      />
+      <Tooltip title={`${expired ? 'Expired' : 'Expires'} ${fmtDate(s.expires_at)}`}>
+        <Chip
+          size="small"
+          icon={<ScheduleRounded />}
+          label={expired ? 'Expired' : `Expires ${fmtRelative(s.expires_at)}`}
+          color={expired ? 'error' : soon ? 'warning' : 'default'}
+          sx={{ borderRadius: 1, height: 22 }}
+        />
+      </Tooltip>
     )
   }
   const pwChip = (s: ShareRow) =>
@@ -77,6 +84,11 @@ export default function Shares() {
   return (
     <Box>
       <Typography variant="h6" sx={{ mb: 1 }}>Shared Links</Typography>
+      {error && (
+        <Alert severity="error" sx={{ mb: 1 }} action={<Button color="inherit" size="small" onClick={load}>Retry</Button>}>
+          {error}
+        </Alert>
+      )}
 
       {/* phones get stacked cards; the wide table only ships on sm+ */}
       {narrow ? (
@@ -129,7 +141,7 @@ export default function Shares() {
               </CardContent>
             </Card>
           ))}
-          {shares.length === 0 && (
+          {empty && (
             <Typography variant="body2" color="text.secondary" sx={{ py: 2, textAlign: 'center' }}>
               No active shares. Right-click a file in My Files to create one.
             </Typography>
@@ -186,7 +198,7 @@ export default function Shares() {
                   </TableCell>
                 </TableRow>
               ))}
-              {shares.length === 0 && (
+              {empty && (
                 <TableRow>
                   <TableCell colSpan={5}>
                     <Typography variant="body2" color="text.secondary" sx={{ py: 2, textAlign: 'center' }}>

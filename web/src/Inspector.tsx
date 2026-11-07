@@ -1,11 +1,11 @@
 import { useEffect, useState } from 'react'
 import {
-  Box, Button, Divider, Drawer, IconButton, Stack, Typography,
+  Box, Button, CircularProgress, Divider, Drawer, IconButton, Stack, Tooltip, Typography,
 } from '@mui/material'
 import Close from '@mui/icons-material/Close'
 import ContentCopy from '@mui/icons-material/ContentCopy'
 import RefreshRounded from '@mui/icons-material/RefreshRounded'
-import { api, Entry, fmtDate, fmtSize, StatInfo } from './api'
+import { api, copyText, Entry, fmtDate, fmtSize, StatInfo } from './api'
 import { FileBadge } from './fileicons'
 import { kindOf } from './filetypes'
 
@@ -34,26 +34,36 @@ export function InspectorDrawer({
   const [copied, setCopied] = useState(false)
   const [busy, setBusy] = useState(false)
 
+  const hasEntry = !!entry
   useEffect(() => {
-    if (!open || !entry) return
+    if (!open || !hasEntry) return
+    // a slow stat (hashing, deep folders) must not land on a newer file
+    let cancelled = false
     setInfo(null)
     setError('')
     setShares([])
     api
       .get(`/api/files/stat?path=${encodeURIComponent(path)}`)
       .then(i => {
+        if (cancelled) return
         setInfo(i)
         return api.get('/api/shares')
       })
       .then(res => {
+        if (cancelled || !res) return
         setShares(
           (res.shares as { token: string; path: string }[])
             .filter(s => s.path === path)
             .map(s => s.token),
         )
       })
-      .catch(e => setError(e.message))
-  }, [open, entry, path])
+      .catch(e => {
+        if (!cancelled) setError(e.message)
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [open, hasEntry, path])
 
   if (!entry) return null
   const kind = kindOf(entry.name, entry.is_dir)
@@ -61,7 +71,7 @@ export function InspectorDrawer({
 
   const copySha = async () => {
     if (!info?.sha256) return
-    await navigator.clipboard.writeText(info.sha256).catch(() => {})
+    if (!(await copyText(info.sha256))) return setError('Could not copy; select the checksum manually')
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
   }
@@ -91,7 +101,7 @@ export function InspectorDrawer({
             {path}
           </Typography>
         </Box>
-        <IconButton size="small" onClick={onClose}><Close fontSize="small" /></IconButton>
+        <IconButton aria-label="Close details" size="small" onClick={onClose}><Close fontSize="small" /></IconButton>
       </Stack>
 
       <Box
@@ -120,6 +130,13 @@ export function InspectorDrawer({
 
       {error && (
         <Typography variant="caption" color="error">{error}</Typography>
+      )}
+
+      {/* stat hashes the file and walks folders, so it can take a while */}
+      {!info && !error && (
+        <Box sx={{ display: 'flex', justifyContent: 'center', py: 3 }}>
+          <CircularProgress size={22} aria-label="Loading details" />
+        </Box>
       )}
 
       {info && (
@@ -183,9 +200,13 @@ export function InspectorDrawer({
             <Button size="small" onClick={() => onDownload(entry)}>Download</Button>
             <Button size="small" onClick={() => onShare(entry)}>Share</Button>
             <Box sx={{ flex: 1 }} />
-            <IconButton size="small" onClick={recompute} disabled={busy}>
-              <RefreshRounded fontSize="small" />
-            </IconButton>
+            <Tooltip title="Refresh details">
+              <span>
+                <IconButton aria-label="Refresh details" size="small" onClick={recompute} disabled={busy}>
+                  <RefreshRounded fontSize="small" />
+                </IconButton>
+              </span>
+            </Tooltip>
           </Stack>
         </Stack>
       )}

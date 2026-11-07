@@ -91,6 +91,7 @@ fn user_json(u: &User) -> serde_json::Value {
         "is_admin": u.is_admin,
         "used_bytes": u.used_bytes,
         "quota_bytes": u.quota_bytes,
+        "version": env!("CARGO_PKG_VERSION"),
     })
 }
 

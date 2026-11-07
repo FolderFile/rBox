@@ -17,10 +17,17 @@ pub enum AppError {
     #[error("unauthorized")]
     Unauthorized,
 
-    // reserved for share-link and admin endpoints in a later step
-    #[allow(dead_code)]
     #[error("forbidden")]
     Forbidden,
+
+    #[error("{0}")]
+    Conflict(String),
+
+    #[error("{0}")]
+    UnsupportedMedia(String),
+
+    #[error("{0}")]
+    PayloadTooLarge(String),
 
     #[error("not found: {0}")]
     NotFound(String),
@@ -74,6 +81,10 @@ pub fn bad(msg: impl Into<String>) -> AppError {
     AppError::BadRequest(msg.into())
 }
 
+pub fn conflict(msg: impl Into<String>) -> AppError {
+    AppError::Conflict(msg.into())
+}
+
 // a missing file/directory is a plain 404, never a 500 io error; this also
 // covers the window between share creation and the file being deleted
 impl From<std::io::Error> for AppError {
@@ -95,8 +106,13 @@ impl AppError {
             AppError::Unauthorized => StatusCode::UNAUTHORIZED,
             AppError::Forbidden => StatusCode::FORBIDDEN,
             AppError::NotFound(_) | AppError::UserNotFound(_) => StatusCode::NOT_FOUND,
-            AppError::UserExists(_) | AppError::AlreadyInitialized(_) => StatusCode::CONFLICT,
-            AppError::QuotaExceeded(_) => StatusCode::PAYLOAD_TOO_LARGE,
+            AppError::UserExists(_) | AppError::AlreadyInitialized(_) | AppError::Conflict(_) => {
+                StatusCode::CONFLICT
+            }
+            AppError::UnsupportedMedia(_) => StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            AppError::QuotaExceeded(_) | AppError::PayloadTooLarge(_) => {
+                StatusCode::PAYLOAD_TOO_LARGE
+            }
             AppError::TooManyRequests => StatusCode::TOO_MANY_REQUESTS,
             AppError::ArchivePassword(_) => StatusCode::UNPROCESSABLE_ENTITY,
             AppError::UnsatisfiableRange => StatusCode::RANGE_NOT_SATISFIABLE,

@@ -1,9 +1,9 @@
 use crate::auth::AuthUser;
-use crate::error::{bad, AppError, Result};
+use crate::error::{bad, conflict, AppError, Result};
 use crate::files;
+use crate::quota;
 use crate::state::AppState;
-use crate::storage;
-use crate::users;
+use crate::storage::{self, Staging, STAGING_PREFIX};
 use axum::extract::{Query, State};
 use axum::Json;
 use serde::Deserialize;
@@ -13,6 +13,7 @@ use std::io::{Read, Seek, Write};
 use std::path::{Path, PathBuf};
 
 const MAX_LEVEL: i32 = 9;
+const QUOTA_MSG: &str = "archive would exceed quota";
 
 #[derive(Deserialize)]
 pub struct CreateReq {
@@ -35,7 +36,7 @@ impl<W: Write> Write for QuotaWriter<W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         self.written += buf.len() as i64;
         if self.written > self.budget {
-            return Err(std::io::Error::other("archive would exceed quota"));
+            return Err(std::io::Error::other(QUOTA_MSG));
         }
         self.inner.write(buf)
     }
@@ -52,13 +53,16 @@ impl<W: Write + Seek> Seek for QuotaWriter<W> {
 
 /// every file/dir under `src`, as (abs, name-inside-archive)
 fn collect(src: &Path, name: &str, out: &mut Vec<(PathBuf, String)>) -> Result<()> {
-    let meta = std::fs::metadata(src).map_err(|_| AppError::NotFound(name.to_string()))?;
+    let meta = std::fs::symlink_metadata(src).map_err(|_| AppError::NotFound(name.to_string()))?;
+    if meta.file_type().is_symlink() {
+        return Ok(()); // links stay out of archives: no reading outside the root
+    }
     if meta.is_dir() {
         out.push((src.to_path_buf(), name.to_string()));
         let mut entries: Vec<_> = std::fs::read_dir(src)?.flatten().collect();
         entries.sort_by_key(|e| e.file_name());
         for e in entries {
-            if e.file_name().to_string_lossy().starts_with(".rbox-tmp") {
+            if e.file_name().to_string_lossy().starts_with(STAGING_PREFIX) {
                 continue;
             }
             let child_name = if name.is_empty() {
@@ -100,7 +104,7 @@ fn tar_encoder(
         }
         "tar.xz" => Box::new(xz2::write::XzEncoder::new(
             out,
-            level.clamp(1, MAX_LEVEL).clamp(1, 9) as u32,
+            level.clamp(1, MAX_LEVEL) as u32,
         )),
         other => return Err(bad(format!("unsupported archive format '{other}'"))),
     })
@@ -128,35 +132,56 @@ pub async fn create(
     }
 
     let root = state.user_dir(auth.user.id);
-    let mut sources = Vec::new();
-    for p in &req.paths {
-        let abs = storage::sanitize(&root, p)?;
-        let name = storage::to_relative(&root, &abs)?;
-        collect(&abs, &name, &mut sources)?;
-    }
     let dest = storage::sanitize(&root, &req.dest_path)?;
     if dest == root {
         return Err(bad("invalid destination path"));
     }
-    let budget = auth.user.quota_bytes - auth.user.used_bytes;
+    if let Some(name) = dest.file_name() {
+        storage::validate_name(&name.to_string_lossy())?;
+    }
+    match dest.parent().map(std::fs::metadata) {
+        Some(Ok(m)) if m.is_dir() => {}
+        _ => {
+            return Err(AppError::NotFound(
+                "destination folder does not exist".into(),
+            ))
+        }
+    }
+    if tokio::fs::try_exists(&dest).await? {
+        return Err(conflict(format!("'{}' already exists", req.dest_path)));
+    }
+    let mut abs_sources = Vec::new();
+    for p in &req.paths {
+        let abs = storage::sanitize(&root, p)?;
+        if abs == root {
+            return Err(bad(
+                "pick files or folders to archive, not your whole storage",
+            ));
+        }
+        abs_sources.push(abs);
+    }
 
-    let staging = files::staging_path(&root)?;
-    let guard = files::TempGuard(staging.clone());
-    let f = std::fs::File::create(&staging)?;
-    let counter = QuotaWriter {
-        inner: f,
-        budget,
-        written: 0,
-    };
-    let bufw = std::io::BufWriter::new(counter);
-
+    let budget = quota::budget(&state, auth.user.id).await?;
+    let staging = Staging::new(files::staging_path(&root));
+    let tmp = staging.path().to_path_buf();
     let password = req.password.clone();
     let format = req.format.clone();
-    let written = tokio::task::spawn_blocking(move || -> Result<i64> {
+    let root_c = root.clone();
+    tokio::task::spawn_blocking(move || -> Result<()> {
+        let mut sources = Vec::new();
+        for abs in &abs_sources {
+            let name = storage::to_relative(&root_c, abs)?;
+            collect(abs, &name, &mut sources)?;
+        }
+        let bufw = std::io::BufWriter::new(QuotaWriter {
+            inner: File::create(&tmp)?,
+            budget: budget.headroom(),
+            written: 0,
+        });
         if zip {
             let mut zw = zip::ZipWriter::new(bufw);
             for (abs, name) in &sources {
-                if std::fs::metadata(abs)?.is_dir() {
+                if std::fs::symlink_metadata(abs)?.is_dir() {
                     zw.add_directory(format!("{name}/"), zip::write::SimpleFileOptions::default())?;
                     continue;
                 }
@@ -173,34 +198,39 @@ pub async fn create(
                 zw.start_file(name.clone(), opts)?;
                 std::io::copy(&mut File::open(abs)?, &mut zw)?;
             }
-            zw.finish()?;
-            Ok(0)
+            zw.finish()?.flush()?;
         } else {
             let mut tar = tar::Builder::new(tar_encoder(&format, level, bufw)?);
+            tar.follow_symlinks(false);
             for (abs, name) in &sources {
                 tar.append_path_with_name(abs, name)?;
             }
             tar.into_inner()?.flush()?;
-            Ok(0)
         }
+        Ok(())
     })
     .await
-    .map_err(|e| AppError::Io(std::io::Error::other(e)))??;
+    .map_err(|e| AppError::Io(std::io::Error::other(e)))?
+    .map_err(|e| {
+        // the QuotaWriter's io error surfaces as a plain io/zip failure
+        if e.to_string().contains(QUOTA_MSG) {
+            budget.exceeded()
+        } else {
+            e
+        }
+    })?;
 
-    let _ = written;
-    let final_size = std::fs::metadata(&staging)?.len();
-
-    if let Some(parent) = dest.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    std::fs::rename(&staging, &dest)?;
-    // the archive is in place now; the guard must not unlink it on return
-    std::mem::forget(guard);
-
-    {
-        let mut conn = state.conn().await;
-        users::adjust_used_bytes(&mut conn, auth.user.id, final_size as i64)?;
-    }
+    let final_size = std::fs::metadata(staging.path())?.len() as i64;
+    quota::commit(&state, auth.user.id, |budget| {
+        budget.check(final_size)?;
+        if dest.exists() {
+            return Err(conflict(format!("'{}' already exists", req.dest_path)));
+        }
+        std::fs::rename(staging.path(), &dest)?;
+        Ok(((), final_size))
+    })
+    .await?;
+    staging.keep();
     Ok(Json(serde_json::json!({
         "ok": true,
         "path": req.dest_path,
@@ -323,12 +353,19 @@ pub async fn extract(
     let dest_rel = req.dest_dir.clone().unwrap_or_default();
     let dest = storage::sanitize(&root, &dest_rel)?;
 
-    let staging = files::staging_path(&root)?;
-    let dir = staging.with_extension("d");
-    std::fs::create_dir_all(&dir)?;
-    let dir_c = dir.clone();
-    let budget = auth.user.quota_bytes - auth.user.used_bytes;
-    let quota_str = crate::size::format_size(auth.user.quota_bytes.max(0) as u64);
+    if let Ok(m) = tokio::fs::metadata(&dest).await {
+        if !m.is_dir() {
+            return Err(conflict(format!("'{dest_rel}' is a file, not a folder")));
+        }
+    }
+
+    // the guard removes the staging tree on every failure path: wrong
+    // password, quota, unsafe entry, client gone
+    let staging = Staging::new(files::staging_path(&root).with_extension("d"));
+    std::fs::create_dir_all(staging.path())?;
+    let dir_c = staging.path().to_path_buf();
+    let snapshot = quota::budget(&state, auth.user.id).await?;
+    let budget = snapshot.headroom();
     let password = req.password;
 
     let (written, count) = tokio::task::spawn_blocking(move || -> Result<(i64, usize)> {
@@ -382,7 +419,7 @@ pub async fn extract(
                         }
                         total += n as i64;
                         if total > budget {
-                            return Err(AppError::QuotaExceeded(quota_str.clone()));
+                            return Err(snapshot.exceeded());
                         }
                         out.write_all(&buf[..n])?;
                     }
@@ -422,7 +459,7 @@ pub async fn extract(
                         }
                         total += n as i64;
                         if total > budget {
-                            return Err(AppError::QuotaExceeded(quota_str.clone()));
+                            return Err(snapshot.exceeded());
                         }
                         out.write_all(&buf[..n])?;
                     }
@@ -436,23 +473,26 @@ pub async fn extract(
     .await
     .map_err(|e| AppError::Io(std::io::Error::other(e)))??;
 
-    // move staged entries into the destination; every name was vetted
-    std::fs::create_dir_all(&dest)?;
-    for e in std::fs::read_dir(&dir)? {
-        let e = e?;
-        let out = dest.join(e.file_name());
-        if out.try_exists()? {
-            std::fs::remove_dir_all(&dir).ok();
-            return Err(bad("destination already contains these entries"));
+    // publish all-or-nothing: every top-level entry is checked for a clash
+    // before the first one moves, all under the quota lock
+    quota::commit(&state, auth.user.id, |budget| {
+        budget.check(written)?;
+        std::fs::create_dir_all(&dest)?;
+        let staged: Vec<_> = std::fs::read_dir(staging.path())?.collect::<std::io::Result<_>>()?;
+        if let Some(clash) = staged.iter().find(|e| dest.join(e.file_name()).exists()) {
+            return Err(conflict(format!(
+                "'{}' already exists in the destination",
+                clash.file_name().to_string_lossy()
+            )));
         }
-        std::fs::rename(e.path(), &out)?;
-    }
-    std::fs::remove_dir_all(&dir).ok();
+        for e in &staged {
+            std::fs::rename(e.path(), dest.join(e.file_name()))?;
+        }
+        Ok(((), written))
+    })
+    .await?;
+    drop(staging); // now empty; removes the staging dir itself
 
-    {
-        let mut conn = state.conn().await;
-        users::adjust_used_bytes(&mut conn, auth.user.id, written)?;
-    }
     Ok(Json(serde_json::json!({
         "ok": true,
         "files": count,
@@ -535,11 +575,11 @@ fn dir_count(dir: &Path) -> Result<u64> {
     let mut n = 0;
     for e in std::fs::read_dir(dir)? {
         let e = e?;
-        if e.file_name().to_string_lossy().starts_with(".rbox-tmp") {
+        if e.file_name().to_string_lossy().starts_with(STAGING_PREFIX) {
             continue;
         }
         n += 1;
-        if e.path().is_dir() {
+        if e.file_type()?.is_dir() {
             n += dir_count(&e.path())?;
         }
     }
@@ -611,7 +651,7 @@ fn walk_search(
     for e in std::fs::read_dir(dir)? {
         let e = e?;
         let name = e.file_name().to_string_lossy().into_owned();
-        if name.starts_with(".rbox-tmp") {
+        if name.starts_with(STAGING_PREFIX) {
             continue;
         }
         let child_rel = if rel.is_empty() {
@@ -619,7 +659,7 @@ fn walk_search(
         } else {
             format!("{rel}/{name}")
         };
-        let is_dir = e.path().is_dir();
+        let is_dir = e.file_type()?.is_dir();
         if name.to_lowercase().contains(needle) && matches_kind(&name, kind) {
             let meta = e.metadata()?;
             out.push(serde_json::json!({

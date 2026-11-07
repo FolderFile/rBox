@@ -1,5 +1,5 @@
 use crate::{admin, archive, auth, files, shares, state::AppState, transfer};
-use axum::extract::Request;
+use axum::extract::{DefaultBodyLimit, Request};
 use axum::http::{header, HeaderValue};
 use axum::middleware::Next;
 use axum::response::Response;
@@ -21,9 +21,19 @@ pub fn build(state: AppState) -> Router {
         .route("/api/files/copy", post(files::copy))
         .route(
             "/api/files/content",
-            get(files::read_content).put(files::write_content),
+            // the editor loads up to TEXT_READ_CAP, so it can save that much
+            get(files::read_content)
+                .put(files::write_content)
+                .layer(DefaultBodyLimit::max(
+                    files::TEXT_READ_CAP as usize + 64 * 1024,
+                )),
         )
-        .route("/api/files/upload", post(transfer::upload))
+        // uploads stream to disk under the quota, which is the real limit;
+        // axum's 2 MB default would reject every sizeable file
+        .route(
+            "/api/files/upload",
+            post(transfer::upload).layer(DefaultBodyLimit::disable()),
+        )
         .route("/api/files/download", get(transfer::download))
         .route("/api/files/zip", get(transfer::zip))
         .route("/api/files/stat", get(archive::stat))

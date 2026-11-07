@@ -84,11 +84,7 @@ pub fn run_user_list(data_dir: &Path) -> Result<()> {
         "ID", "USERNAME", "USED", "QUOTA", "ADMIN"
     );
     for u in users::list(&conn)? {
-        let created: String = conn.query_row(
-            "SELECT created_at FROM users WHERE id = ?1",
-            rusqlite::params![u.id],
-            |r| r.get(0),
-        )?;
+        let created = &u.created_at;
         println!(
             "{:<5} {:<24} {:>12} {:>12} {:<8} {}",
             u.id,
@@ -167,7 +163,7 @@ pub fn run_user_recalc(data_dir: &Path, username: Option<&str>) -> Result<()> {
     Ok(())
 }
 
-pub async fn run_serve(data_dir: &Path, bind: &str, port: u16) -> Result<()> {
+pub async fn run_serve(data_dir: &Path, bind: &str, port: u16, trust_proxy: bool) -> Result<()> {
     db::require_initialized(data_dir)?;
     {
         let conn = db::open(data_dir)?;
@@ -180,17 +176,93 @@ pub async fn run_serve(data_dir: &Path, bind: &str, port: u16) -> Result<()> {
         }
     }
 
-    let state = AppState::new(data_dir)?;
+    let state = AppState::new(data_dir)?.with_trust_proxy(trust_proxy);
     let app = router::build(state);
 
-    let addr = format!("{bind}:{port}");
+    // bare ipv6 addresses need brackets to combine with a port
+    let addr = if bind.contains(':') && !bind.starts_with('[') {
+        format!("[{bind}]:{port}")
+    } else {
+        format!("{bind}:{port}")
+    };
     let listener = tokio::net::TcpListener::bind(&addr)
         .await
         .map_err(|e| other(format!("cannot bind {addr}: {e}")))?;
-    println!("rbox listening on {addr}");
-    axum::serve(listener, app)
-        .await
-        .map_err(|e| other(format!("server error: {e}")))?;
+    println!(
+        "rbox {} listening on http://{addr}{}",
+        env!("CARGO_PKG_VERSION"),
+        if trust_proxy {
+            " (trusting proxy headers)"
+        } else {
+            ""
+        }
+    );
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(shutdown_signal())
+    .await
+    .map_err(|e| other(format!("server error: {e}")))?;
+    println!("rbox stopped");
+    Ok(())
+}
+
+/// ctrl-c or SIGTERM (systemd, docker stop): stop accepting, let in-flight
+/// requests finish, then exit cleanly
+async fn shutdown_signal() {
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    #[cfg(unix)]
+    let term = async {
+        match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            Ok(mut s) => {
+                s.recv().await;
+            }
+            Err(_) => std::future::pending::<()>().await,
+        }
+    };
+    #[cfg(not(unix))]
+    let term = std::future::pending::<()>();
+    tokio::select! {
+        _ = ctrl_c => {},
+        _ = term => {},
+    }
+    println!("shutting down…");
+}
+
+pub fn run_user_passwd(data_dir: &Path, username: &str, password: Option<String>) -> Result<()> {
+    db::require_initialized(data_dir)?;
+    let conn = db::open(data_dir)?;
+    let user = users::find_by_username(&conn, username)?
+        .ok_or_else(|| AppError::UserNotFound(username.to_string()))?;
+    let password = match password {
+        Some(p) => p,
+        None => {
+            let first =
+                rpassword::prompt_password(format!("New password for '{}': ", user.username))?;
+            let second = rpassword::prompt_password("Confirm password: ")?;
+            if first != second {
+                return Err(other("passwords do not match"));
+            }
+            first
+        }
+    };
+    users::set_password(&conn, user.id, &password)?;
+    let revoked = conn.execute(
+        "DELETE FROM sessions WHERE user_id = ?1",
+        rusqlite::params![user.id],
+    )?;
+    println!(
+        "Password for '{}' updated; {revoked} session(s) revoked{}",
+        user.username,
+        if revoked > 0 {
+            " (restart a running server for it to drop them from memory)"
+        } else {
+            ""
+        }
+    );
     Ok(())
 }
 
@@ -213,7 +285,11 @@ pub async fn dispatch(cli: cli::Cli) -> Result<()> {
             admin_password,
             admin_quota,
         } => run_init(&cli.data_dir, admin_user, admin_password, &admin_quota),
-        cli::Command::Serve { bind, port } => run_serve(&cli.data_dir, &bind, port).await,
+        cli::Command::Serve {
+            bind,
+            port,
+            trust_proxy,
+        } => run_serve(&cli.data_dir, &bind, port, trust_proxy).await,
         cli::Command::User(cmd) => match cmd {
             cli::UserCommand::Add {
                 username,
@@ -221,6 +297,9 @@ pub async fn dispatch(cli: cli::Cli) -> Result<()> {
                 quota,
             } => run_user_add(&cli.data_dir, &username, password, &quota),
             cli::UserCommand::List => run_user_list(&cli.data_dir),
+            cli::UserCommand::Passwd { username, password } => {
+                run_user_passwd(&cli.data_dir, &username, password)
+            }
             cli::UserCommand::Quota { username, new_size } => {
                 run_user_quota(&cli.data_dir, &username, &new_size)
             }

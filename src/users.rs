@@ -25,7 +25,6 @@ pub fn hash_password(password: &str) -> Result<String> {
         .map_err(|e| other(format!("password hashing failed: {e}")))
 }
 
-#[allow(dead_code)]
 pub fn verify_password(password: &str, hash: &str) -> bool {
     PasswordHash::new(hash)
         .ok()
@@ -35,6 +34,13 @@ pub fn verify_password(password: &str, hash: &str) -> bool {
                 .ok()
         })
         .is_some()
+}
+
+pub fn validate_password(password: &str) -> Result<()> {
+    if password.chars().count() < MIN_PASSWORD_LEN {
+        return Err(bad("password must be at least 8 characters"));
+    }
+    Ok(())
 }
 
 pub fn validate_username(username: &str) -> Result<()> {
@@ -60,9 +66,7 @@ pub fn create(
     if find_by_username(conn, username)?.is_some() {
         return Err(AppError::UserExists(username.to_string()));
     }
-    if password.len() < MIN_PASSWORD_LEN {
-        return Err(bad("password must be at least 8 characters"));
-    }
+    validate_password(password)?;
     let hash = hash_password(password)?;
     conn.execute(
         "INSERT INTO users (username, password_hash, quota_bytes, is_admin)
@@ -83,7 +87,6 @@ pub fn find_by_username(conn: &Connection, username: &str) -> Result<Option<User
     .map_err(Into::into)
 }
 
-#[allow(dead_code)]
 pub fn find_by_id(conn: &Connection, id: i64) -> Result<Option<User>> {
     conn.query_row(
         "SELECT id, username, quota_bytes, used_bytes, is_admin, created_at
@@ -118,7 +121,6 @@ pub fn set_quota(conn: &Connection, username: &str, quota: u64) -> Result<User> 
     Ok(user)
 }
 
-#[allow(dead_code)] // consumed by upload/download handlers
 pub fn adjust_used_bytes(conn: &mut Connection, user_id: i64, delta: i64) -> Result<i64> {
     // clamped at 0 so a stale delta can never push usage negative
     let tx = conn.transaction()?;
@@ -144,9 +146,7 @@ pub fn set_used_bytes(conn: &Connection, user_id: i64, used: u64) -> Result<()> 
 }
 
 pub fn set_password(conn: &Connection, user_id: i64, password: &str) -> Result<()> {
-    if password.len() < MIN_PASSWORD_LEN {
-        return Err(bad("password must be at least 8 characters"));
-    }
+    validate_password(password)?;
     conn.execute(
         "UPDATE users SET password_hash = ?1 WHERE id = ?2",
         params![hash_password(password)?, user_id],

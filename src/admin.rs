@@ -61,6 +61,9 @@ pub async fn create_user(
     _admin: AdminUser,
     Json(req): Json<CreateUserReq>,
 ) -> Result<(axum::http::StatusCode, Json<serde_json::Value>)> {
+    if req.quota_bytes > i64::MAX as u64 {
+        return Err(bad("quota is too large"));
+    }
     let conn = state.conn().await;
     let id = users::create(
         &conn,
@@ -69,6 +72,7 @@ pub async fn create_user(
         req.quota_bytes,
         req.is_admin,
     )?;
+    drop(conn);
     tokio::fs::create_dir_all(state.user_dir(id)).await?;
     crate::storage::ensure_default_folders(&state.user_dir(id));
     Ok((
@@ -90,28 +94,46 @@ pub async fn update_user(
     Path(username): Path<String>,
     Json(req): Json<UpdateUserReq>,
 ) -> Result<Json<serde_json::Value>> {
-    let conn = state.conn().await;
-    let Some(user) = users::find_by_username(&conn, &username)? else {
-        return Err(AppError::UserNotFound(username));
-    };
+    let user = {
+        let mut conn = state.conn().await;
+        let Some(user) = users::find_by_username(&conn, &username)? else {
+            return Err(AppError::UserNotFound(username));
+        };
 
-    if let Some(q) = req.quota_bytes {
-        users::set_quota(&conn, &user.username, q)?;
-    }
-    if let Some(ref p) = req.password {
-        users::set_password(&conn, user.id, p)?;
-    }
-    if let Some(want_admin) = req.is_admin {
-        // the last remaining admin cannot be demoted, or the box locks itself
-        if user.is_admin && !want_admin && users::admin_count(&conn)? <= 1 {
-            return Err(bad("cannot demote the last remaining admin account"));
+        // validate everything first so a rejected request changes nothing
+        if let Some(want_admin) = req.is_admin {
+            // the last remaining admin cannot be demoted, or the box locks itself
+            if user.is_admin && !want_admin && users::admin_count(&conn)? <= 1 {
+                return Err(bad("cannot demote the last remaining admin account"));
+            }
         }
-        if want_admin != user.is_admin {
-            users::set_admin(&conn, user.id, want_admin)?;
+        if let Some(ref p) = req.password {
+            users::validate_password(p)?;
         }
+        if req.quota_bytes.is_some_and(|q| q > i64::MAX as u64) {
+            return Err(bad("quota is too large"));
+        }
+
+        let tx = conn.transaction()?;
+        if let Some(q) = req.quota_bytes {
+            users::set_quota(&tx, &user.username, q)?;
+        }
+        if let Some(ref p) = req.password {
+            users::set_password(&tx, user.id, p)?;
+        }
+        if let Some(want_admin) = req.is_admin {
+            if want_admin != user.is_admin {
+                users::set_admin(&tx, user.id, want_admin)?;
+            }
+        }
+        tx.commit()?;
+        users::find_by_id(&conn, user.id)?.ok_or_else(|| AppError::UserNotFound(username))?
+    };
+    if req.password.is_some() {
+        // a reset password is usually a response to a compromise: sign the
+        // account out everywhere (the db lock is released above)
+        state.revoke_user_sessions(user.id).await;
     }
-    let user =
-        users::find_by_id(&conn, user.id)?.ok_or_else(|| AppError::UserNotFound(username))?;
     Ok(Json(user_json(&user)))
 }
 
@@ -138,6 +160,8 @@ pub async fn delete_user(
         return Err(bad("cannot delete the last remaining admin account"));
     }
     let id = users::delete(&conn, &username)?;
+    drop(conn);
+    state.revoke_user_sessions(id).await;
     if q.purge {
         let dir = state.user_dir(id);
         if tokio::fs::try_exists(&dir).await? {
@@ -154,11 +178,21 @@ pub async fn recalc_user(
     _admin: AdminUser,
     Path(username): Path<String>,
 ) -> Result<Json<serde_json::Value>> {
-    let conn = state.conn().await;
-    let Some(user) = users::find_by_username(&conn, &username)? else {
-        return Err(AppError::UserNotFound(username));
+    let user = {
+        let conn = state.conn().await;
+        users::find_by_username(&conn, &username)?
+            .ok_or_else(|| AppError::UserNotFound(username))?
     };
-    let actual = users::recalc(&conn, state.data_dir(), &user)?;
+    // the disk walk can take a while on big trees; keep it off the workers
+    // and don't hold the db lock while it runs
+    let dir = state.user_dir(user.id);
+    let actual = tokio::task::spawn_blocking(move || storage::disk_usage(&dir))
+        .await
+        .map_err(|e| other(format!("join error: {e}")))?;
+    {
+        let conn = state.conn().await;
+        users::set_used_bytes(&conn, user.id, actual)?;
+    }
     Ok(Json(
         serde_json::json!({ "ok": true, "used_bytes": actual }),
     ))

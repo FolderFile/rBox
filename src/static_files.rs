@@ -1,6 +1,5 @@
 use crate::error::{other, Result};
-use axum::http::Uri;
-use axum::http::{header, HeaderValue, StatusCode};
+use axum::http::{header, HeaderMap, HeaderValue, StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use rust_embed::RustEmbed;
 
@@ -33,7 +32,7 @@ fn is_asset_request(path: &str) -> bool {
 /// embedded SPA. any non-GET (or missing) asset falls back to index.html so
 /// client-side routing works; hashed files under /assets/ get immutable
 /// caching, everything else revalidates on each load.
-pub async fn serve(uri: Uri) -> Result<Response> {
+pub async fn serve(uri: Uri, headers: HeaderMap) -> Result<Response> {
     let path = uri.path().trim_start_matches('/');
 
     let (asset, cache, mime) = match Assets::get(path) {
@@ -55,21 +54,76 @@ pub async fn serve(uri: Uri) -> Result<Response> {
             )
         }
     };
-    Ok((
-        StatusCode::OK,
-        [
-            (
-                header::CONTENT_TYPE,
-                HeaderValue::from_str(&mime).map_err(|e| other(e.to_string()))?,
-            ),
-            (
-                header::CACHE_CONTROL,
-                HeaderValue::from_str(&cache).map_err(|e| other(e.to_string()))?,
-            ),
-        ],
-        asset.data,
-    )
-        .into_response())
+    let key = if Assets::get(path).is_some() {
+        path
+    } else {
+        "index.html"
+    };
+    let mut res = if compressible(&mime) && accepts_gzip(&headers) {
+        let body = gzipped(key, &asset.data);
+        let mut res = (StatusCode::OK, body).into_response();
+        res.headers_mut()
+            .insert(header::CONTENT_ENCODING, HeaderValue::from_static("gzip"));
+        res
+    } else {
+        (StatusCode::OK, asset.data.into_owned()).into_response()
+    };
+    let h = res.headers_mut();
+    h.insert(
+        header::CONTENT_TYPE,
+        HeaderValue::from_str(&mime).map_err(|e| other(e.to_string()))?,
+    );
+    h.insert(
+        header::CACHE_CONTROL,
+        HeaderValue::from_str(&cache).map_err(|e| other(e.to_string()))?,
+    );
+    h.insert(header::VARY, HeaderValue::from_static("accept-encoding"));
+    Ok(res)
+}
+
+fn compressible(mime: &str) -> bool {
+    mime.starts_with("text/")
+        || matches!(
+            mime,
+            "application/javascript" | "application/json" | "image/svg+xml" | "application/wasm"
+        )
+}
+
+fn accepts_gzip(headers: &HeaderMap) -> bool {
+    headers
+        .get(header::ACCEPT_ENCODING)
+        .and_then(|v| v.to_str().ok())
+        .is_some_and(|v| {
+            v.split(',').any(|enc| {
+                let mut parts = enc.split(';');
+                let name = parts.next().unwrap_or("").trim();
+                let refused = parts.any(|p| p.trim().replace(' ', "") == "q=0");
+                (name.eq_ignore_ascii_case("gzip") || name == "*") && !refused
+            })
+        })
+}
+
+/// the embedded bundle is ~1.6 MB of JS that shrinks ~3-4x; compress each
+/// asset once on first request and keep the result for the process lifetime
+fn gzipped(key: &str, data: &[u8]) -> bytes::Bytes {
+    use std::collections::HashMap;
+    use std::io::Write;
+    use std::sync::{Mutex, OnceLock};
+    static CACHE: OnceLock<Mutex<HashMap<String, bytes::Bytes>>> = OnceLock::new();
+    let cache = CACHE.get_or_init(Default::default);
+    if let Some(hit) = cache.lock().ok().and_then(|c| c.get(key).cloned()) {
+        return hit;
+    }
+    let mut enc = flate2::write::GzEncoder::new(Vec::new(), flate2::Compression::best());
+    let out = enc
+        .write_all(data)
+        .and_then(|_| enc.finish())
+        .map(bytes::Bytes::from)
+        .unwrap_or_else(|_| bytes::Bytes::copy_from_slice(data));
+    if let Ok(mut c) = cache.lock() {
+        c.insert(key.to_string(), out.clone());
+    }
+    out
 }
 
 fn immutable_cache(path: &str) -> String {

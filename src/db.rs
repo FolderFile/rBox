@@ -3,7 +3,7 @@ use rusqlite::Connection;
 use std::path::{Path, PathBuf};
 
 const DB_FILE: &str = "rbox.db";
-pub const SCHEMA_VERSION: i64 = 2;
+pub const SCHEMA_VERSION: i64 = 3;
 
 pub fn db_path(data_dir: &Path) -> PathBuf {
     data_dir.join(DB_FILE)
@@ -31,42 +31,62 @@ pub fn open(data_dir: &Path) -> Result<Connection> {
     Ok(conn)
 }
 
-/// v1 databases predate share expiry and passwords; bring them up silently.
-/// fresh dirs (version 0) are handled by init_schema.
+const SESSIONS_DDL: &str = "CREATE TABLE IF NOT EXISTS sessions (
+         id          INTEGER PRIMARY KEY AUTOINCREMENT,
+         token_hash  TEXT NOT NULL UNIQUE,
+         user_id     INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+         user_agent  TEXT NOT NULL DEFAULT '',
+         created_at  INTEGER NOT NULL,
+         expires_at  INTEGER NOT NULL
+     );
+     CREATE INDEX IF NOT EXISTS idx_sessions_user ON sessions(user_id);";
+
+/// bring older databases up step by step, each step idempotent so a
+/// partially-migrated file never chokes. fresh dirs (version 0) are handled
+/// by init_schema.
 fn migrate(conn: &Connection) -> Result<()> {
-    match schema_version(conn).unwrap_or(0) {
-        0 | SCHEMA_VERSION => Ok(()),
-        1 => {
-            // guard each column so partially-migrated databases don't choke
-            for (col, ddl) in [
-                (
-                    "expires_at",
-                    "ALTER TABLE shares ADD COLUMN expires_at INTEGER",
-                ),
-                (
-                    "password_hash",
-                    "ALTER TABLE shares ADD COLUMN password_hash TEXT",
-                ),
-            ] {
-                let exists: i64 = conn.query_row(
-                    "SELECT COUNT(*) FROM pragma_table_info('shares') WHERE name = ?1",
-                    [col],
-                    |r| r.get(0),
-                )?;
-                if exists == 0 {
-                    conn.execute(ddl, [])?;
-                }
-            }
-            conn.execute(
-                "UPDATE meta SET value = '2' WHERE key = 'schema_version'",
-                [],
-            )?;
-            Ok(())
-        }
-        v => Err(other(format!(
-            "database schema version {v} is newer than supported version {SCHEMA_VERSION}"
-        ))),
+    let mut version = schema_version(conn).unwrap_or(0);
+    if version == 0 {
+        return Ok(());
     }
+    if version > SCHEMA_VERSION {
+        return Err(other(format!(
+            "database schema version {version} is newer than supported version {SCHEMA_VERSION}"
+        )));
+    }
+    if version == 1 {
+        // v1 predates share expiry and passwords
+        for (col, ddl) in [
+            (
+                "expires_at",
+                "ALTER TABLE shares ADD COLUMN expires_at INTEGER",
+            ),
+            (
+                "password_hash",
+                "ALTER TABLE shares ADD COLUMN password_hash TEXT",
+            ),
+        ] {
+            let exists: i64 = conn.query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('shares') WHERE name = ?1",
+                [col],
+                |r| r.get(0),
+            )?;
+            if exists == 0 {
+                conn.execute(ddl, [])?;
+            }
+        }
+        version = 2;
+    }
+    if version == 2 {
+        // v2 kept sessions in memory only; every restart logged everyone out
+        conn.execute_batch(SESSIONS_DDL)?;
+        version = 3;
+    }
+    conn.execute(
+        "UPDATE meta SET value = ?1 WHERE key = 'schema_version'",
+        [version.to_string()],
+    )?;
+    Ok(())
 }
 
 pub fn init_schema(conn: &Connection) -> Result<()> {
@@ -76,7 +96,7 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
              key   TEXT PRIMARY KEY,
              value TEXT NOT NULL
          );
-         INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '2');
+         INSERT OR IGNORE INTO meta (key, value) VALUES ('schema_version', '3');
          CREATE TABLE IF NOT EXISTS users (
              id            INTEGER PRIMARY KEY AUTOINCREMENT,
              username      TEXT NOT NULL UNIQUE COLLATE NOCASE,
@@ -98,6 +118,7 @@ pub fn init_schema(conn: &Connection) -> Result<()> {
          CREATE INDEX IF NOT EXISTS idx_shares_user ON shares(user_id);
          COMMIT;",
     )?;
+    conn.execute_batch(SESSIONS_DDL)?;
     Ok(())
 }
 
@@ -158,6 +179,15 @@ mod tests {
             .query_row("SELECT COUNT(*) FROM shares WHERE token = 't'", [], |r| {
                 r.get(0)
             })
+            .unwrap();
+        assert_eq!(n, 1);
+        // the v3 step ran too
+        let n: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE name = 'sessions'",
+                [],
+                |r| r.get(0),
+            )
             .unwrap();
         assert_eq!(n, 1);
     }

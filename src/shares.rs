@@ -1,4 +1,4 @@
-use crate::auth::AuthUser;
+use crate::auth::{AuthUser, ClientIp};
 use crate::error::{bad, AppError, Result};
 use crate::state::AppState;
 use crate::storage;
@@ -126,11 +126,13 @@ pub async fn list(
 }
 
 /// drop every share row pointing at `path` or anything underneath it; called
-/// when the target is deleted so dead links never linger in the ui
+/// when the target is deleted so dead links never linger in the ui. prefix
+/// matching is byte-exact: LIKE would be case-insensitive and treat `_`/`%`
+/// in folder names as wildcards.
 pub fn remove_shares_under(conn: &Connection, user_id: i64, path: &str) -> rusqlite::Result<usize> {
     conn.execute(
-        "DELETE FROM shares WHERE user_id = ?1 AND (file_path = ?2 OR file_path LIKE ?3 || '/%')",
-        params![user_id, path, path],
+        "DELETE FROM shares WHERE user_id = ?1 AND (file_path = ?2 OR substr(file_path, 1, length(?2) + 1) = ?2 || '/')",
+        params![user_id, path],
     )
 }
 
@@ -143,9 +145,9 @@ pub fn retarget_shares(
     new_path: &str,
 ) -> rusqlite::Result<usize> {
     conn.execute(
-        "UPDATE shares SET file_path = ?4 || substr(file_path, length(?3) + 1)
-         WHERE user_id = ?1 AND (file_path = ?2 OR file_path LIKE ?3 || '/%')",
-        params![user_id, old_path, old_path, new_path],
+        "UPDATE shares SET file_path = ?3 || substr(file_path, length(?2) + 1)
+         WHERE user_id = ?1 AND (file_path = ?2 OR substr(file_path, 1, length(?2) + 1) = ?2 || '/')",
+        params![user_id, old_path, new_path],
     )
 }
 
@@ -201,6 +203,7 @@ fn password_from(headers: &HeaderMap, query_password: Option<&str>) -> Option<St
 async fn resolve(
     state: &AppState,
     token: &str,
+    ip: &str,
     headers: &HeaderMap,
     query_password: Option<&str>,
 ) -> Result<(Share, std::path::PathBuf)> {
@@ -213,10 +216,23 @@ async fn resolve(
     if !tokio::fs::try_exists(&target).await? {
         return Err(AppError::NotFound("shared file no longer exists".into()));
     }
-    if let Some(hash) = &share.password_hash {
-        let ok = password_from(headers, query_password)
-            .is_some_and(|p| crate::users::verify_password(&p, hash));
+    if let Some(hash) = share.password_hash.clone() {
+        // share passwords get the same brute-force cap as logins
+        let key = format!("share|{ip}|{token}");
+        if !state
+            .attempt_allowed(&key, crate::state::SHARE_MAX_FAILURES)
+            .await
+        {
+            return Err(AppError::TooManyRequests);
+        }
+        let given = password_from(headers, query_password);
+        let ok = tokio::task::spawn_blocking(move || {
+            given.is_some_and(|p| crate::users::verify_password(&p, &hash))
+        })
+        .await
+        .unwrap_or(false);
         if !ok {
+            state.record_failure(&key).await;
             return Err(AppError::Unauthorized);
         }
     }
@@ -270,11 +286,12 @@ pub async fn info(
 
 pub async fn download(
     State(state): State<AppState>,
+    ClientIp(ip): ClientIp,
     Path(token): Path<String>,
     Query(q): Query<PublicQuery>,
     headers: HeaderMap,
 ) -> Result<Response> {
-    let (share, target) = resolve(&state, &token, &headers, q.password.as_deref()).await?;
+    let (share, target) = resolve(&state, &token, &ip, &headers, q.password.as_deref()).await?;
     let root = state.user_dir(share.user_id);
     if tokio::fs::metadata(&target).await?.is_dir() {
         transfer::serve_zip(&root, &share.file_path).await
@@ -292,7 +309,9 @@ async fn share_name_size(state: &AppState, share: &Share) -> Result<(String, u64
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "files".into());
     let size = if meta.is_dir() {
-        storage::disk_usage(&target)
+        tokio::task::spawn_blocking(move || storage::disk_usage(&target))
+            .await
+            .unwrap_or(0)
     } else {
         meta.len()
     };
@@ -304,29 +323,32 @@ async fn share_name_size(state: &AppState, share: &Share) -> Result<(String, u64
 /// `/s/{token}/raw/{filename}` exists so the URL ends in a real extension.
 pub async fn raw(
     State(state): State<AppState>,
+    ip: ClientIp,
     Path(token): Path<String>,
     Query(q): Query<PublicQuery>,
     headers: HeaderMap,
 ) -> Result<Response> {
-    raw_impl(state, token, q.password, headers).await
+    raw_impl(state, ip, token, q.password, headers).await
 }
 
 pub async fn raw_named(
     State(state): State<AppState>,
+    ip: ClientIp,
     Path((token, _filename)): Path<(String, String)>,
     Query(q): Query<PublicQuery>,
     headers: HeaderMap,
 ) -> Result<Response> {
-    raw_impl(state, token, q.password, headers).await
+    raw_impl(state, ip, token, q.password, headers).await
 }
 
 async fn raw_impl(
     state: AppState,
+    ClientIp(ip): ClientIp,
     token: String,
     password: Option<String>,
     headers: HeaderMap,
 ) -> Result<Response> {
-    let (share, _) = resolve(&state, &token, &headers, password.as_deref()).await?;
+    let (share, _) = resolve(&state, &token, &ip, &headers, password.as_deref()).await?;
     let root = state.user_dir(share.user_id);
     transfer::serve_file(&root, &share.file_path, &headers, true).await
 }
@@ -347,15 +369,29 @@ pub async fn landing(State(state): State<AppState>, Path(token): Path<String>) -
         find_share(&conn, &token)?
     };
     let mut html = String::from_utf8_lossy(&crate::static_files::index_bytes()?.data).into_owned();
-    if let Some(share) = share {
-        let (name, size) = share_name_size(&state, &share).await?;
-        let name = html_escape(&name);
+    let card = match share {
+        Some(share) => share_name_size(&state, &share).await.ok(),
+        None => None,
+    };
+    if let Some((name, size)) = card {
         let size = crate::size::format_size(size);
+        let title = html_escape(&format!("{name} ({size})"));
         let description = html_escape(&format!(
             "Shared via rbox — self-hosted file vault. Click to preview or download {name}."
         ));
+        let page_title = html_escape(&format!("{name} · rbox"));
+        // the shell's own <title> stays first in the document; browsers use
+        // the first, unfurlers read og:title, so replace it in place
+        if let (Some(a), Some(b)) = (html.find("<title>"), html.find("</title>")) {
+            if a < b {
+                html.replace_range(
+                    a..b + "</title>".len(),
+                    &format!("<title>{page_title}</title>"),
+                );
+            }
+        }
         let meta = format!(
-            "<meta property=\"og:title\" content=\"{name} ({size})\" />\
+            "<meta property=\"og:title\" content=\"{title}\" />\
              <meta property=\"og:site_name\" content=\"rbox\" />\
              <meta property=\"og:description\" content=\"{description}\" />\
              <meta name=\"theme-color\" content=\"#e53935\" />"

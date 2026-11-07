@@ -6,6 +6,7 @@ pub mod commands;
 pub mod db;
 pub mod error;
 pub mod files;
+pub mod quota;
 pub mod router;
 pub mod shares;
 pub mod size;

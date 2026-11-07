@@ -1,10 +1,9 @@
 use crate::auth::AuthUser;
-use crate::error::{bad, other, AppError, Result};
-use crate::files::{staging_path, TempGuard};
-use crate::size::format_size;
+use crate::error::{bad, conflict, other, AppError, Result};
+use crate::files::staging_path;
+use crate::quota;
 use crate::state::AppState;
-use crate::storage;
-use crate::users;
+use crate::storage::{self, Staging};
 use axum::body::Body;
 use axum::extract::{Multipart, Query, State};
 use axum::http::header::{self, HeaderMap};
@@ -54,11 +53,11 @@ fn content_disposition(name: &str, inline: bool) -> String {
     format!("attachment; filename=\"{fallback}\"; filename*=UTF-8''{encoded}")
 }
 
-/// multipart upload streamed straight to a staging file next to the target, so
-/// the final rename() is atomic. the budget starts at quota - used, refilled
-/// by any file this same request overwrites; the moment a chunk pushes past
-/// it the stream aborts, the partial file is unlinked and 413 goes back without
-/// touching sqlite.
+/// multipart upload; each file streams to a staging file next to the target
+/// so the final rename() is atomic. the stream aborts early once a chunk
+/// pushes past the remaining headroom (refilled by the file it overwrites);
+/// every finished file is then committed on its own through `quota::commit`,
+/// so files that landed before a later one overflows stay on the books.
 pub async fn upload(
     State(state): State<AppState>,
     auth: AuthUser,
@@ -67,13 +66,13 @@ pub async fn upload(
 ) -> Result<Json<serde_json::Value>> {
     let root = state.user_dir(auth.user.id);
     let dir = storage::sanitize(&root, &req.path)?;
-    if !tokio::fs::try_exists(&dir).await? {
-        return Err(AppError::NotFound(req.path));
+    match tokio::fs::metadata(&dir).await {
+        Ok(m) if m.is_dir() => {}
+        _ => return Err(AppError::NotFound(req.path)),
     }
-    tokio::fs::create_dir_all(&dir).await?;
 
-    let mut avail = auth.user.quota_bytes - auth.user.used_bytes;
     let mut total_delta: i64 = 0;
+    let mut files = 0usize;
 
     while let Some(mut field) = multipart
         .next_field()
@@ -86,44 +85,53 @@ pub async fn upload(
         let name = sanitize_file_name(&name)?;
         let dst = dir.join(&name);
         let old_size = match tokio::fs::metadata(&dst).await {
-            Ok(meta) if meta.is_dir() => return Err(bad(format!("'{name}' is a directory"))),
+            Ok(meta) if meta.is_dir() => {
+                return Err(conflict(format!("a folder named '{name}' already exists")))
+            }
             Ok(meta) => meta.len() as i64,
             Err(_) => 0,
         };
-        avail += old_size;
+        let budget = quota::budget(&state, auth.user.id).await?;
+        let avail = budget.headroom() + old_size;
 
-        let tmp = TempGuard(staging_path(&root)?);
-        let mut out = tokio::io::BufWriter::new(tokio::fs::File::create(&tmp.0).await?);
+        let staging = Staging::new(staging_path(&root));
+        let mut out = tokio::io::BufWriter::new(tokio::fs::File::create(staging.path()).await?);
         let mut written: i64 = 0;
-        loop {
-            let Some(chunk) = field
-                .chunk()
-                .await
-                .map_err(|e| other(format!("upload stream error: {e}")))?
-            else {
-                break;
-            };
+        while let Some(chunk) = field
+            .chunk()
+            .await
+            .map_err(|e| other(format!("upload stream error: {e}")))?
+        {
             written += chunk.len() as i64;
             if written > avail {
-                return Err(AppError::QuotaExceeded(format_size(
-                    auth.user.quota_bytes.max(0) as u64,
-                )));
+                return Err(budget.exceeded());
             }
             out.write_all(&chunk).await?;
         }
         out.flush().await?;
         drop(out);
-        tokio::fs::rename(&tmp.0, &dst).await?;
-        total_delta += written - old_size;
-        avail -= written;
+
+        let delta = quota::commit(&state, auth.user.id, |budget| {
+            // re-stat under the lock: another request may have replaced dst
+            let old = match std::fs::metadata(&dst) {
+                Ok(m) if m.is_dir() => {
+                    return Err(conflict(format!("a folder named '{name}' already exists")))
+                }
+                Ok(m) => m.len() as i64,
+                Err(_) => 0,
+            };
+            budget.check(written - old)?;
+            std::fs::rename(staging.path(), &dst)?;
+            Ok((written - old, written - old))
+        })
+        .await?;
+        staging.keep();
+        total_delta += delta;
+        files += 1;
     }
 
-    if total_delta != 0 {
-        let mut conn = state.conn().await;
-        users::adjust_used_bytes(&mut conn, auth.user.id, total_delta)?;
-    }
     Ok(Json(
-        serde_json::json!({ "ok": true, "delta": total_delta }),
+        serde_json::json!({ "ok": true, "files": files, "delta": total_delta }),
     ))
 }
 
@@ -134,10 +142,17 @@ fn sanitize_file_name(name: &str) -> Result<String> {
         .chars()
         .map(|c| if c.is_control() { '_' } else { c })
         .collect::<String>();
-    if name.is_empty() || name.starts_with('.') || name.len() > 255 {
-        return Err(bad("invalid file name"));
-    }
+    storage::validate_name(&name)?;
     Ok(name)
+}
+
+/// inline responses render user content on our own origin; a sandbox CSP
+/// strips scripts, forms and same-origin access so a shared .html or .svg
+/// can't act with a viewer's session. PDFs are exempt because browser PDF
+/// viewers refuse to load in a sandboxed document, and they run isolated
+/// from the page origin anyway.
+fn inline_csp(mime: &str) -> Option<&'static str> {
+    (mime != "application/pdf").then_some("sandbox; default-src 'none'; img-src 'self' data:; media-src 'self'; style-src 'unsafe-inline'")
 }
 
 pub async fn download(
@@ -161,9 +176,12 @@ pub async fn serve_file(
     inline: bool,
 ) -> Result<Response> {
     let file = storage::sanitize(root, path)?;
-    let meta = tokio::fs::metadata(&file).await?;
+    let meta = tokio::fs::symlink_metadata(&file).await?;
     if meta.is_dir() {
         return Err(bad("path is a directory; use the zip endpoint"));
+    }
+    if !meta.is_file() {
+        return Err(AppError::NotFound(path.to_string()));
     }
     let size = meta.len();
     let mime = mime_guess::from_path(&file)
@@ -174,20 +192,32 @@ pub async fn serve_file(
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_else(|| "download".into());
     let disposition = content_disposition(&file_name, inline);
+    let csp = if inline { inline_csp(&mime) } else { None };
+    let with_csp = |mut res: Response| {
+        if let Some(csp) = csp {
+            res.headers_mut().insert(
+                header::CONTENT_SECURITY_POLICY,
+                header::HeaderValue::from_static(csp),
+            );
+        }
+        res
+    };
 
     let Some(range) = headers.get(header::RANGE) else {
         let stream = ReaderStream::new(tokio::fs::File::open(&file).await?);
-        return Ok((
-            StatusCode::OK,
-            [
-                (header::CONTENT_TYPE, mime),
-                (header::CONTENT_LENGTH, size.to_string()),
-                (header::ACCEPT_RANGES, "bytes".to_string()),
-                (header::CONTENT_DISPOSITION, disposition),
-            ],
-            Body::from_stream(stream),
-        )
-            .into_response());
+        return Ok(with_csp(
+            (
+                StatusCode::OK,
+                [
+                    (header::CONTENT_TYPE, mime),
+                    (header::CONTENT_LENGTH, size.to_string()),
+                    (header::ACCEPT_RANGES, "bytes".to_string()),
+                    (header::CONTENT_DISPOSITION, disposition),
+                ],
+                Body::from_stream(stream),
+            )
+                .into_response(),
+        ));
     };
 
     let raw = range.to_str().map_err(|_| bad("bad range header"))?;
@@ -196,21 +226,23 @@ pub async fn serve_file(
     f.seek(std::io::SeekFrom::Start(r.start)).await?;
     // 64KB chunks keep media scrubbing responsive without thrashing allocs
     let stream = ReaderStream::with_capacity(f.take(r.len), 64 * 1024);
-    Ok((
-        StatusCode::PARTIAL_CONTENT,
-        [
-            (header::CONTENT_TYPE, mime),
-            (header::CONTENT_LENGTH, r.len.to_string()),
-            (header::ACCEPT_RANGES, "bytes".to_string()),
-            (
-                header::CONTENT_RANGE,
-                format!("bytes {}-{}/{}", r.start, r.end, size),
-            ),
-            (header::CONTENT_DISPOSITION, disposition),
-        ],
-        Body::from_stream(stream),
-    )
-        .into_response())
+    Ok(with_csp(
+        (
+            StatusCode::PARTIAL_CONTENT,
+            [
+                (header::CONTENT_TYPE, mime),
+                (header::CONTENT_LENGTH, r.len.to_string()),
+                (header::ACCEPT_RANGES, "bytes".to_string()),
+                (
+                    header::CONTENT_RANGE,
+                    format!("bytes {}-{}/{}", r.start, r.end, size),
+                ),
+                (header::CONTENT_DISPOSITION, disposition),
+            ],
+            Body::from_stream(stream),
+        )
+            .into_response(),
+    ))
 }
 
 struct ByteRange {
@@ -332,8 +364,12 @@ async fn write_zip(
         let mut rd = tokio::fs::read_dir(&dir).await?;
         while let Some(entry) = rd.next_entry().await? {
             let name = entry.file_name().to_string_lossy().into_owned();
-            if name.starts_with(".rbox-tmp") {
+            if name.starts_with(storage::STAGING_PREFIX) {
                 continue;
+            }
+            let file_type = entry.file_type().await?;
+            if file_type.is_symlink() {
+                continue; // never follow a link out of the shared tree
             }
             let rel = if prefix.is_empty() {
                 name.clone()
@@ -341,7 +377,7 @@ async fn write_zip(
                 format!("{prefix}/{name}")
             };
             let path = entry.path();
-            if entry.metadata().await?.is_dir() {
+            if file_type.is_dir() {
                 // explicit entries keep empty folders in the archive
                 zw.write_entry_stream(ZipEntryBuilder::new(
                     format!("{rel}/").into(),

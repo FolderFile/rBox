@@ -8,7 +8,12 @@ use clap::{Parser, Subcommand};
 )]
 pub struct Cli {
     /// Root data directory holding the database and user storage.
-    #[arg(long, global = true, default_value = "/var/lib/rbox")]
+    #[arg(
+        long,
+        global = true,
+        default_value = "/var/lib/rbox",
+        env = "RBOX_DATA_DIR"
+    )]
     pub data_dir: std::path::PathBuf,
 
     #[command(subcommand)]
@@ -31,11 +36,17 @@ pub enum Command {
     },
     /// Start the HTTP server.
     Serve {
-        /// Address and port to listen on.
-        #[arg(long, default_value = "0.0.0.0")]
+        /// Address to listen on.
+        #[arg(long, default_value = "0.0.0.0", env = "RBOX_BIND")]
         bind: String,
-        #[arg(long, default_value_t = 8000)]
+        /// Port to listen on.
+        #[arg(long, default_value_t = 8000, env = "RBOX_PORT")]
         port: u16,
+        /// Trust X-Forwarded-For / CF-Connecting-IP / X-Forwarded-Proto for
+        /// client addresses. Enable only behind a reverse proxy or tunnel
+        /// that sets them; otherwise clients could spoof them.
+        #[arg(long, env = "RBOX_TRUST_PROXY")]
+        trust_proxy: bool,
     },
     /// Manage user accounts.
     #[command(subcommand)]
@@ -55,6 +66,13 @@ pub enum UserCommand {
     },
     /// List all users.
     List,
+    /// Set a new password for a user and sign them out everywhere.
+    Passwd {
+        username: String,
+        /// New password (prompted interactively if omitted).
+        #[arg(long)]
+        password: Option<String>,
+    },
     /// Change a user's storage quota.
     Quota {
         username: String,

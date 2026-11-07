@@ -1,6 +1,6 @@
 [package]
 name = "rbox"
-version = "0.4.0"
+version = "0.5.0"
 edition = "2021"
 description = "A Rust File Manager - self-hosted, multi-user file manager and web server"
 license = "MIT"
@@ -8,7 +8,7 @@ license = "MIT"
 [dependencies]
 anyhow = "1"
 thiserror = "2"
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 tokio = { version = "1", features = ["full"] }
 axum = { version = "0.8", features = ["multipart"] }
 rusqlite = { version = "0.32", features = ["bundled"] }
